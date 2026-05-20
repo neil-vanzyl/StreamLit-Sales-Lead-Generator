@@ -1,10 +1,10 @@
 """
 tools/gemini.py — Gemini Flash client.
 
-Single job: assemble_brief()
-  Converts intake form selections into a structured research brief
-  that is passed directly to Grok for discovery + research in one pass.
-  Exa is no longer used in the discovery path.
+Single job: enrich_brief()
+  Takes the auto-built brief and enriches it with industry-aware terminology,
+  signal groupings, and an aggregation hint for Grok.
+  Falls back gracefully to the auto-built brief if Gemini fails.
 """
 
 import logging
@@ -16,7 +16,7 @@ from typing import List
 import requests
 
 import config
-from prompts.gemini_scorer import BRIEF_ASSEMBLY_PROMPT
+from prompts.gemini_scorer import BRIEF_ENRICHMENT_PROMPT
 
 logger = logging.getLogger("ott_lead_gen.gemini")
 
@@ -24,38 +24,19 @@ GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
-# ---------------------------------------------------------------------------
-# Shared request helper
-# ---------------------------------------------------------------------------
-
-def _call_gemini(prompt: str, max_tokens: int = config.GEMINI_DISCOVERY_MAX_TOKENS) -> tuple:
-    """Fire a single-turn Gemini request and return (text, tokens_in, tokens_out)."""
+def _call_gemini(prompt: str, max_tokens: int = 512) -> tuple:
     if not GEMINI_API_KEY:
-        raise ValueError(
-            "GEMINI_API_KEY is not set. Add it to your Streamlit secrets or .env"
-        )
-
+        raise ValueError("GEMINI_API_KEY is not set.")
     api_url = f"{GEMINI_BASE_URL}/{config.GEMINI_DISCOVERY_MODEL}:generateContent"
-
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.4,
-        },
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.3},
     }
-
-    resp = requests.post(
-        f"{api_url}?key={GEMINI_API_KEY}",
-        json=payload,
-        timeout=30,
-    )
-
+    resp = requests.post(f"{api_url}?key={GEMINI_API_KEY}", json=payload, timeout=30)
     if resp.status_code != 200:
         logger.error(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
         resp.raise_for_status()
-
-    data = resp.json()
+    data     = resp.json()
     raw_text = (
         data.get("candidates", [{}])[0]
         .get("content", {})
@@ -63,97 +44,79 @@ def _call_gemini(prompt: str, max_tokens: int = config.GEMINI_DISCOVERY_MAX_TOKE
         .get("text", "")
     )
     if not raw_text:
-        logger.error(f"Gemini: empty response body. Full response: {data}")
         raise ValueError("Gemini returned empty content")
-
-    usage_meta = data.get("usageMetadata", {})
-    tokens_in  = usage_meta.get("promptTokenCount", 0)
-    tokens_out = usage_meta.get("candidatesTokenCount", 0)
-
-    return raw_text.strip(), tokens_in, tokens_out
+    usage = data.get("usageMetadata", {})
+    return raw_text.strip(), usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
 def _extract_json(raw: str):
-    """Strip markdown fences and parse JSON."""
+
     if not raw:
-        raise ValueError("Empty response from Gemini")
+        raise ValueError("Empty response")
     text = raw.strip()
-    logger.debug(f"Gemini raw response: {text[:500]}")
+    
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
     brace = re.search(r"\{.*\}", text, re.DOTALL)
     if brace:
         text = brace.group(0)
-    if not text:
-        raise ValueError(f"Could not extract JSON from: {raw[:200]}")
     return json.loads(text)
 
 
-# ---------------------------------------------------------------------------
-# Brief assembly — converts form selections to Grok research brief
-# ---------------------------------------------------------------------------
-
-def assemble_brief(
+def enrich_brief(
+    auto_brief: str,
     verticals: List[str],
     signals: List[str],
-    context: str,
     bu: str,
     usage_tracker=None,
 ) -> dict:
     """
-    Assemble a structured Grok research brief from intake form selections.
-
-    Returns:
-        {
-            "brief":         Full research brief text (passed to Grok),
-            "query_summary": Short plain-English summary (shown in GUI),
-            "signal_focus":  List of primary signal types selected,
-        }
-        On failure returns a fallback brief constructed directly from inputs.
+    Enrich an auto-built brief with industry-aware terminology, signal groupings,
+    and an aggregation hint. Returns enriched_brief and used_gemini flag.
+    Never raises — falls back to auto_brief on any failure.
     """
-    logger.info(
-        f"Gemini: assembling brief — verticals={verticals} "
-        f"signals={len(signals)} bu={bu}"
-    )
+    bu_label = {
+        "NAM":  "North America (US, Canada, Mexico)",
+        "E&L":  "Europe or Latin America",
+        "APAC": "Asia Pacific (including Australia and New Zealand)",
+    }.get(bu, bu)
 
-    prompt = BRIEF_ASSEMBLY_PROMPT.format(
-        verticals=", ".join(verticals) if verticals else "Not specified",
-        signals=", ".join(signals) if signals else "Not specified",
-        context=context.strip() if context else "No additional context provided",
-        bu=bu or "NAM",
+    prompt = BRIEF_ENRICHMENT_PROMPT.format(
+        verticals=", ".join(verticals),
+        signals=", ".join(signals),
+        bu_label=bu_label,
+        auto_brief=auto_brief,
     )
 
     try:
-        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=1024)
+        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=512)
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
-        result = _extract_json(raw)
+        result        = _extract_json(raw)
+        vertical_desc = result.get("vertical_description", "").strip()
+        signal_groups = result.get("signal_groups", [])
+        agg_hint      = result.get("aggregation_hint", "").strip()
 
-        brief = result.get("brief", "").strip()
-        summary = result.get("query_summary", "").strip()
-        signal_focus = result.get("signal_focus", signals[:4])
+        if not vertical_desc or not signal_groups:
+            raise ValueError("Incomplete enrichment response")
 
-        logger.info(f"Gemini brief assembled: '{summary}' ({len(brief)} chars)")
-        return {
-            "brief":        brief,
-            "query_summary": summary,
-            "signal_focus": signal_focus,
-        }
+        signal_lines = "\n".join(
+            f"- [{g.get('label', '')}]: {g.get('description', '')}"
+            for g in signal_groups
+        )
+
+        enriched = (
+            f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical_desc} "
+            f"headquartered in {bu_label}.\n\n"
+            f"SIGNAL FOCUS:\n{signal_lines}\n\n"
+            f"AGGREGATION PRIORITY: {agg_hint}"
+        )
+
+        logger.info(f"Gemini enrichment OK — {len(enriched)} chars")
+        return {"enriched_brief": enriched, "used_gemini": True}
 
     except Exception as exc:
-        logger.warning(f"Gemini brief assembly failed ({exc}) — using fallback")
-
-        # Fallback: construct a plain brief directly from selections
-        fallback = (
-            f"Find Tier 1 and Tier 2 {', '.join(verticals)} companies "
-            f"headquartered in {bu} showing these signals: {', '.join(signals)}. "
-        )
-        if context:
-            fallback += context
-        return {
-            "brief":        fallback,
-            "query_summary": f"{', '.join(verticals)} — {', '.join(signals[:2])}",
-            "signal_focus": signals[:4],
-        }
+        logger.warning(f"Gemini enrichment failed ({exc}) — using auto-built brief")
+        return {"enriched_brief": auto_brief, "used_gemini": False}

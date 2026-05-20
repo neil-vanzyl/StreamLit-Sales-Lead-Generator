@@ -2,52 +2,47 @@
 prompts/gemini_scorer.py — Gemini brief assembly prompt and randomizer configs.
 """
 
-BRIEF_ASSEMBLY_PROMPT = """
-You are a Senior Sales Intelligence Researcher at Accedo (https://www.accedo.tv),
-a premium OTT front-end development firm. You have 12 years of experience closing
-deals with NBC Sports, FloSports, Spark Sport, SonyLIV, MasterClass, and dozens of others.
+BRIEF_ENRICHMENT_PROMPT = """
+You are a senior sales intelligence researcher at Accedo, an OTT front-end development firm.
 
-Your job is to take a sales rep's intake form selections and assemble them into a
-precise, structured research brief that Grok will use to find and qualify companies.
+A sales rep has selected verticals and signals from a form. Your job is to enrich their
+auto-built brief with three specific improvements — nothing more:
 
-The brief must be specific enough that Grok can find REAL companies with REAL signals —
-not generic descriptions. It should read like a briefing from a senior sales director
-to a research analyst, not a search query.
+1. VERTICAL EXPANSION: Replace generic vertical names with specific industry terminology,
+   company types, and examples that Grok can actually search for.
+   Examples:
+   - "Faith" → "Faith-based and Christian media organisations, ministry streamers, CCM networks, prayer apps, religious broadcasters (e.g., NRB members)"
+   - "Audio" → "Podcast networks, digital radio operators, audio streaming platforms, music streaming services expanding to video"
+   - "Sports" → "Regional sports networks (RSNs), sports leagues, broadcast rights holders, sports streaming services"
+   - "News" → "Digital news publishers, local broadcasters, news networks, OTT news services"
+   - "Entertainment" → "SVOD/AVOD streaming services, studio-owned platforms, entertainment networks"
+   - "Fitness" → "Digital fitness platforms, health and wellness streaming services, exercise video brands"
+   - "Education" → "EdTech video platforms, e-learning streaming services, educational content providers"
+   - "Gaming" → "Esports organisations, game publishers, interactive entertainment companies"
+   - "In-Vehicle" → "Automotive entertainment providers, in-vehicle infotainment companies"
+   - "Pay TV" → "Cable operators, telco TV providers, pay TV platform operators"
+   - "Multi-Vertical" → "Multi-genre streaming services, media conglomerates with multiple content verticals"
 
-ACCEDO'S CORE SERVICES (reference these when framing the opportunity):
-- Bespoke smart TV app development: Samsung Tizen, LG WebOS, Roku, Fire TV, Apple TV, Android TV
-- SSAI integration, DRM implementation, live/sports streaming architecture
-- Platform migration from white-label vendors (ViewLift, 24i, 3SS, OTTera, Endeavor Streaming)
-- Multi-platform unification after M&A
-- Team augmentation: engineering, QA, UX/UI
-- Managed services and support
-- First-time CTV builds for mobile-first or social-first companies
+2. SIGNAL GROUPING: Group the selected signals into 2-3 thematic buckets with a one-line
+   description per bucket. Use the format from the example below. Do NOT list every signal
+   individually — group related ones together with industry context.
 
-INTAKE FORM:
-Verticals selected: {verticals}
-Signals selected: {signals}
-Additional context: {context}
-Business Unit (geography focus): {bu}
+3. AGGREGATION HINT: One sentence pointing Grok at the single most relevant industry
+   aggregation source for these verticals (conference, award, market report, association).
 
-GEOGRAPHY GUIDANCE:
-- NAM: Focus on companies headquartered in North America (US, Canada, Mexico)
-- E&L: Focus on companies headquartered in Europe or Latin America
-- APAC: Focus on companies headquartered in Asia Pacific (including Australia and New Zealand)
+SELECTED VERTICALS: {verticals}
+SELECTED SIGNALS: {signals}
+GEOGRAPHY: {bu_label}
+AUTO-BUILT BRIEF: {auto_brief}
 
-BRIEF ASSEMBLY RULES:
-1. Write the brief in second person directed at Grok ("Find...", "Look for...", "Prioritise...")
-2. Be specific about what signals to look for based on the selections
-3. Include the geography constraint naturally
-4. If vendor context is mentioned, instruct Grok to look for displacement signals
-5. Tier guidance: prefer Tier 1 and Tier 2, include ambitious Tier 3
-6. The brief should be 150-250 words — substantive but scannable
-7. End with a one-line priority instruction
-
-Return ONLY a JSON object, no preamble, no markdown fences:
+Return ONLY a JSON object, no preamble, no markdown:
 {{
-  "brief": "The full research brief text, 150-250 words",
-  "query_summary": "10-15 word plain English summary of what we're hunting for",
-  "signal_focus": ["list", "of", "2-4", "primary", "signal", "types"]
+  "vertical_description": "Expanded description of the target company types with industry terminology",
+  "signal_groups": [
+    {{"label": "Group name", "description": "What to look for and why it signals Accedo opportunity"}},
+    {{"label": "Group name", "description": "..."}}
+  ],
+  "aggregation_hint": "Single sentence: best industry list/conference/award to search for these verticals"
 }}
 """
 

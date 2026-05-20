@@ -702,7 +702,7 @@ def _display_results(results: list, dry: bool, query_str: str, bu: str) -> None:
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.markdown("## 🎯 Lead Scout")
+    st.markdown("## Lead Scout")
     st.caption("Accedo · Director of Strategic Accounts")
     st.divider()
 
@@ -920,7 +920,7 @@ else:
         ]
 
         SIGNALS = {
-            "🏗️ Platform & Technology": [
+            "Platform & Technology": [
                 "First CTV build",
                 "CTV ambition",
                 "Smart TV app launch",
@@ -930,13 +930,13 @@ else:
                 "App store complaints",
                 "SSAI/DRM change",
             ],
-            "🎨 Product & Design": [
+            "Product & Design": [
                 "App redesign",
                 "Platform consolidation",
                 "New product/UX leadership",
                 "Rebrand with digital implications",
             ],
-            "👥 Hiring": [
+            "Hiring": [
                 "Hiring: OTT/CTV engineers",
                 "Hiring: Front-end engineers",
                 "Hiring: QA automation",
@@ -944,7 +944,7 @@ else:
                 "Hiring: Product managers",
                 "Hiring: TPMs / delivery leads",
             ],
-            "📈 Commercial & Growth": [
+            "Commercial & Growth": [
                 "Rights without platform",
                 "FAST/AVOD launch",
                 "Funding round",
@@ -956,7 +956,7 @@ else:
                 "Gaming company entering video",
                 "Post-acquisition integration",
             ],
-            "⚠️ Risk & Distress": [
+            "Risk & Distress (whats affecting them)": [
                 "RFP activity",
                 "Leadership change in digital/streaming",
                 "Competitor launched on CTV first",
@@ -994,6 +994,7 @@ else:
                     _new_brief += f"\n\nAdditional context: {cfg['context']}"
                 st.session_state["brief_text_area"]     = _new_brief
                 st.session_state["last_selection_hash"] = None
+                st.session_state["brief_used_gemini"]   = False
 
                 for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
@@ -1059,7 +1060,25 @@ else:
                 if context_val.strip():
                     auto_brief += f"\n\nAdditional context: {context_val.strip()}"
 
-                st.session_state["brief_text_area"]     = auto_brief
+                # Enrich with Gemini — fast call, falls back silently if it fails
+                final_brief = auto_brief
+                used_gemini = False
+                if config.GEMINI_API_KEY:
+                    try:
+                        from tools.gemini import enrich_brief
+                        enrichment = enrich_brief(
+                            auto_brief=auto_brief,
+                            verticals=selected_verticals,
+                            signals=selected_signals,
+                            bu=bu,
+                        )
+                        final_brief = enrichment.get("enriched_brief", auto_brief)
+                        used_gemini = enrichment.get("used_gemini", False)
+                    except Exception:
+                        pass
+
+                st.session_state["brief_text_area"]     = final_brief
+                st.session_state["brief_used_gemini"]   = used_gemini
                 st.session_state["last_selection_hash"] = hash((
                     tuple(sorted(selected_verticals)),
                     tuple(sorted(selected_signals)),
@@ -1073,7 +1092,11 @@ else:
         # ----------------------------------------------------------------
         if st.session_state.get("brief_text_area"):
             st.divider()
-            st.caption("**Research Brief** — edit before searching if needed")
+            used_gemini = st.session_state.get("brief_used_gemini", False)
+            st.caption(
+                "**Research Brief** — edit before searching if needed"
+                + (" · ✨ Gemini enriched" if used_gemini else " · auto-built")
+            )
 
             edited_brief = st.text_area(
                 "",
