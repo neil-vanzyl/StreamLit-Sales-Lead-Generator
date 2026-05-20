@@ -49,7 +49,6 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
             {"type": "web_search"},
             {"type": "x_search"},
         ],
-        "response_format": {"type": "json_object"},
         "temperature": 0.1,
         "store_messages": True,
     }
