@@ -20,7 +20,10 @@ import config
 import main
 from utils.helpers import setup_logging
 from utils.usage_tracker import load_usage_history
-
+from core.enrichment_runner import (
+    parse_company_input, estimate_enrichment_cost,
+    run_bulk_enrichment, run_company_enrichment,
+)
 setup_logging(level=logging.INFO)
 
 # ---------------------------------------------------------------------------
