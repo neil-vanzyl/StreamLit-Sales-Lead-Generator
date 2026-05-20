@@ -187,11 +187,11 @@ BU_DEFAULT: str = "NAM"
 # ---------------------------------------------------------------------------
 SALES_DIRECTORS: List[str] = [
     "Select your name...",
-    "Director 1",
-    "Director 2",
-    "Director 3",
-    "Director 4",
-    "Director 5",
+    "Albert Lee",
+    "Ashley Desatink",
+    "Mrugesh Desai",
+    "Pritesh Modi",
+    "Neil van Zyl",
 ]
 
 DIRECTOR_BUDGET_USD: float = 75.00   # monthly budget per director
