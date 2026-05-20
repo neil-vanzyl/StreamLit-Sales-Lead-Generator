@@ -20,19 +20,19 @@ from prompts.gemini_scorer import BRIEF_ENRICHMENT_PROMPT
 
 logger = logging.getLogger("ott_lead_gen.gemini")
 
-GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 def _call_gemini(prompt: str, max_tokens: int = 512) -> tuple:
-    if not GEMINI_API_KEY:
+    api_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
     api_url = f"{GEMINI_BASE_URL}/{config.GEMINI_DISCOVERY_MODEL}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.3},
     }
-    resp = requests.post(f"{api_url}?key={GEMINI_API_KEY}", json=payload, timeout=30)
+    resp = requests.post(f"{api_url}?key={api_key}", json=payload, timeout=30)
     if resp.status_code != 200:
         logger.error(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
         resp.raise_for_status()
@@ -50,11 +50,9 @@ def _call_gemini(prompt: str, max_tokens: int = 512) -> tuple:
 
 
 def _extract_json(raw: str):
-
     if not raw:
         raise ValueError("Empty response")
     text = raw.strip()
-    
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
