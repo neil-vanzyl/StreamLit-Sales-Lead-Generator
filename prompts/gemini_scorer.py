@@ -37,11 +37,16 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Return your response in this exact format and nothing else. No JSON, no markdown, no preamble:
+Return your response in this exact format and nothing else. No JSON, no markdown, no preamble. You MUST output all three lines — VERTICAL, SIGNALS, and AGGREGATION:
 
 VERTICAL: [expanded description of target company types with industry terminology]
-SIGNALS: [2-3 thematic signal groups, each on one line, format: GroupName: description]
+SIGNALS: [2-3 thematic signal groups separated by | format: GroupName: description | GroupName: description]
 AGGREGATION: [single sentence naming the best industry list or conference to search]
+
+Example of correct output:
+VERTICAL: Regional sports networks (RSNs), professional sports leagues, sports streaming services, collegiate athletic conferences
+SIGNALS: Platform Modernization: Companies replacing white-label vendor infrastructure or rebuilding CTV apps from scratch | Talent Investment: Active hiring of OTT engineers or product managers signalling platform build intent
+AGGREGATION: Search Sports Video Group (SVG) member directory and SportsPro OTT Awards shortlists for qualifying companies.
 """
 
 # ---------------------------------------------------------------------------
