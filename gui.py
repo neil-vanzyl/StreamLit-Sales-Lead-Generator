@@ -1077,8 +1077,8 @@ else:
                         )
                         final_brief = enrichment.get("enriched_brief", auto_brief)
                         used_gemini = enrichment.get("used_gemini", False)
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        st.warning(f"Gemini enrichment debug: {_e}")
 
                 st.session_state["brief_text_area"]     = final_brief
                 st.session_state["brief_used_gemini"]   = used_gemini
