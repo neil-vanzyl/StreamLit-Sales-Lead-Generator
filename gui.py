@@ -1067,7 +1067,13 @@ else:
                 # Enrich with Gemini — fast call, falls back silently if it fails
                 final_brief = auto_brief
                 used_gemini = False
-                _gemini_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+                try:
+                    _gemini_key = (st.secrets.get("GEMINI_API_KEY", "") or
+                                   config.GEMINI_API_KEY or
+                                   os.environ.get("GEMINI_API_KEY", ""))
+                except Exception:
+                    _gemini_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+
                 if _gemini_key:
                     try:
                         from tools.gemini import enrich_brief
