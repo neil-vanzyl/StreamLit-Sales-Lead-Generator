@@ -941,7 +941,7 @@ else:
                     "APAC": "Asia Pacific",
                 }.get(bu, bu)
                 _new_brief = (
-                    f"Find Tier 1 and Tier 2 {', '.join(cfg['verticals'])} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(cfg['verticals'])} companies "
                     f"headquartered in {_bu_label} "
                     f"showing these OTT buying signals: {', '.join(cfg['signals'])}."
                 )
@@ -1070,14 +1070,16 @@ else:
                             state="complete", expanded=False,
                         )
                         # Show discovery sweep cost
-                        _sweep_u = sweep.get("usage")
+                        
                         if _sweep_u:
-                            _sweep_u.finish()
-                            render_usage_panel(_sweep_u.summary())
-                    except Exception as exc:
-                        status.update(label="❌ Error", state="error", expanded=True)
-                        st.error(f"**Error:** {exc}")
-                        st.exception(exc)
+                            try:
+                                _sweep_u.finish()
+                                st.session_state["sweep_usage_summary"] = _sweep_u.summary()
+                            except Exception:
+                                pass
+
+                        if st.session_state.get("sweep_usage_summary"):
+                            render_usage_panel(st.session_state["sweep_usage_summary"])
 
         # ----------------------------------------------------------------
         # STAGE C — Company selection
