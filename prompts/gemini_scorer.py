@@ -1,14 +1,6 @@
 """
-prompts/gemini_scorer.py — Gemini's single job: assemble a structured
-research brief from the intake form selections.
-
-The brief is passed directly to Grok, which does its own live web search
-to find and research companies. Exa is no longer used in the discovery path.
+prompts/gemini_scorer.py — Gemini brief assembly prompt and randomizer configs.
 """
-
-# ---------------------------------------------------------------------------
-# Brief assembly prompt
-# ---------------------------------------------------------------------------
 
 BRIEF_ASSEMBLY_PROMPT = """
 You are a Senior Sales Intelligence Researcher at Accedo (https://www.accedo.tv),
@@ -41,46 +33,43 @@ GEOGRAPHY GUIDANCE:
 - NAM: Focus on companies headquartered in North America (US, Canada, Mexico)
 - E&L: Focus on companies headquartered in Europe or Latin America
 - APAC: Focus on companies headquartered in Asia Pacific (including Australia and New Zealand)
-- Companies with global operations are fine — HQ location is the filter, not operational footprint
 
 BRIEF ASSEMBLY RULES:
 1. Write the brief in second person directed at Grok ("Find...", "Look for...", "Prioritise...")
 2. Be specific about what signals to look for based on the selections
-3. Include the geography constraint naturally — frame it as HQ location preference
-4. If specific vendors are mentioned in context, instruct Grok to look for displacement signals
-5. If hiring signals are selected, specify the exact role types to look for
-6. Tier guidance: Accedo sells to Tier 1 and Tier 2 organisations — avoid startups under 50 employees
-7. The brief should be 150-250 words — substantive but scannable
-8. End with a one-line priority instruction: what is the single most important signal to find?
+3. Include the geography constraint naturally
+4. If vendor context is mentioned, instruct Grok to look for displacement signals
+5. Tier guidance: prefer Tier 1 and Tier 2, include ambitious Tier 3
+6. The brief should be 150-250 words — substantive but scannable
+7. End with a one-line priority instruction
 
 Return ONLY a JSON object, no preamble, no markdown fences:
 {{
-  "brief": "The full research brief text, 150-250 words, ready to send to Grok",
-  "query_summary": "10-15 word plain English summary of what we're hunting for (shown to rep)",
-  "signal_focus": ["list", "of", "2-4", "primary", "signal", "types", "selected"]
+  "brief": "The full research brief text, 150-250 words",
+  "query_summary": "10-15 word plain English summary of what we're hunting for",
+  "signal_focus": ["list", "of", "2-4", "primary", "signal", "types"]
 }}
 """
 
 # ---------------------------------------------------------------------------
-# Randomizer configurations — used by the Suggest button to auto-fill the form
-# Each entry maps to the exact field names used in the intake form
+# Randomizer configurations
 # ---------------------------------------------------------------------------
 
 RANDOM_CONFIGS = [
     {
         "verticals": ["Sports"],
-        "signals": ["Rights deal", "First CTV build", "Hiring: OTT/CTV engineers"],
+        "signals": ["Rights without platform", "First CTV build", "Hiring: OTT/CTV engineers"],
         "context": "Regional sports networks that recently secured new broadcast rights and need to launch a CTV experience before the season starts",
     },
     {
         "verticals": ["News"],
-        "signals": ["First CTV build", "Hiring: Product managers", "Platform consolidation"],
+        "signals": ["CTV ambition", "Hiring: Product managers", "Platform consolidation"],
         "context": "Digital-first news publishers with strong mobile audiences that have not yet built a connected TV presence",
     },
     {
         "verticals": ["Sports", "Entertainment"],
-        "signals": ["Vendor migration", "App store complaints", "Hiring: OTT/CTV engineers"],
-        "context": "Broadcasters showing frustration with ViewLift or 24i — slow releases, poor OEM support, or recent 24i bankruptcy concern",
+        "signals": ["Stranded vendor customer", "App store complaints", "Hiring: OTT/CTV engineers"],
+        "context": "Broadcasters on 24i or ViewLift/Endeavor platforms showing frustration — slow releases, poor OEM support, platform uncertainty",
     },
     {
         "verticals": ["Entertainment"],
@@ -94,37 +83,37 @@ RANDOM_CONFIGS = [
     },
     {
         "verticals": ["Sports"],
-        "signals": ["M&A / platform unification", "Hiring: TPMs", "Platform consolidation"],
+        "signals": ["M&A / platform unification", "Post-acquisition integration", "Hiring: TPMs / delivery leads"],
         "context": "Sports media companies that have gone through an acquisition and are now running two separate streaming platforms that need unification",
     },
     {
         "verticals": ["Education"],
-        "signals": ["CTV expansion", "Funding round", "Hiring: Front-end engineers"],
+        "signals": ["CTV ambition", "Funding round", "Hiring: Front-end engineers"],
         "context": "EdTech video platforms that closed Series B or later and are expanding from mobile to connected TV devices",
     },
     {
         "verticals": ["Fitness"],
-        "signals": ["App redesign", "CTV expansion", "Hiring: OTT/CTV engineers"],
+        "signals": ["App redesign", "CTV ambition", "Hiring: OTT/CTV engineers"],
         "context": "Fitness streaming services with strong mobile subscriptions that need to improve or rebuild their smart TV experience",
     },
     {
         "verticals": ["Multi-Vertical"],
-        "signals": ["DTC pivot", "Leadership change", "Hiring: Product managers"],
+        "signals": ["DTC pivot", "Leadership change in digital/streaming", "Hiring: Product managers"],
         "context": "Traditional media companies announcing a direct-to-consumer streaming pivot with new digital leadership in place",
     },
     {
         "verticals": ["News", "Sports"],
-        "signals": ["Rights deal", "Market expansion", "First CTV build"],
+        "signals": ["Rights without platform", "Market expansion", "First CTV build"],
         "context": "News or sports broadcasters expanding into new territories and needing CTV apps for markets where they have no existing platform",
     },
     {
         "verticals": ["Audio"],
-        "signals": ["CTV expansion", "First CTV build", "Funding round"],
+        "signals": ["CTV ambition", "First CTV build", "Funding round"],
         "context": "Audio-first platforms (podcasts, music, radio) that are adding video content and need their first CTV application",
     },
     {
         "verticals": ["Pay TV"],
-        "signals": ["Vendor migration", "Platform consolidation", "App store complaints"],
+        "signals": ["Stranded vendor customer", "Platform migration", "App store complaints"],
         "context": "Pay TV operators whose legacy middleware or white-label OTT stack is showing its age — poor app ratings, slow feature delivery",
     },
     {
@@ -134,12 +123,27 @@ RANDOM_CONFIGS = [
     },
     {
         "verticals": ["Entertainment", "Faith"],
-        "signals": ["FAST/AVOD launch", "First CTV build", "Hiring: Product managers"],
+        "signals": ["FAST/AVOD launch", "First CTV build", "SSAI/DRM change"],
         "context": "SVOD services pivoting to add a free ad-supported tier and needing SSAI integration across their smart TV apps",
     },
     {
         "verticals": ["In-Vehicle"],
         "signals": ["First CTV build", "Funding round", "Hiring: Front-end engineers"],
         "context": "Auto or in-vehicle entertainment companies building video streaming experiences for next-generation vehicle platforms",
+    },
+    {
+        "verticals": ["Entertainment", "Sports"],
+        "signals": ["Social-first publisher going owned OTT", "CTV ambition", "DTC pivot"],
+        "context": "YouTube-native or social-first sports and entertainment publishers building their first owned streaming platform",
+    },
+    {
+        "verticals": ["Sports"],
+        "signals": ["Competitor launched on CTV first", "CTV ambition", "Rights without platform"],
+        "context": "Regional sports networks whose closest competitor just launched on Roku or Apple TV — urgency signal for Accedo outreach",
+    },
+    {
+        "verticals": ["Entertainment"],
+        "signals": ["Gaming company entering video", "First CTV build", "Hiring: OTT/CTV engineers"],
+        "context": "Gaming companies or esports organisations expanding into video streaming and needing their first OTT platform",
     },
 ]

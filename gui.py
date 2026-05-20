@@ -913,33 +913,58 @@ else:
 
         VERTICALS = [
             "Sports", "News", "Entertainment", "Faith", "Fitness",
-            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Other",
+            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Micro-drama", "FAST", "Other",
         ]
 
         SIGNALS = {
-            "🏗️ OTT / CTV": [
-                "First CTV build", "CTV expansion", "Smart TV app launch",
-                "Platform migration", "Vendor migration", "Video player overhaul",
-                "App store complaints", "RFP activity", "SSAI/DRM change",
+            "Platform & Technology": [
+                "First CTV build",
+                "Legacy app upgrade",
+                "Mobile-only focused",
+                "Evaluating native apps",
+                "CTV ambition",
+                "Smart TV app launch",
+                "Platform migration",
+                "Stranded vendor customer",
+                "Video player overhaul",
+                "App store complaints",
+                "SSAI/DRM change",
             ],
-            "🎨 Product / UX": [
-                "App redesign", "Rebrand", "Platform consolidation",
-                "Leadership change", "New product/UX leadership",
+            "Product & Design": [
+                "App redesign",
+                "Platform consolidation",
+                "New product/UX leadership",
+                "Rebrand with digital implications",
             ],
-            "👥 Hiring": [
-                "Hiring: OTT/CTV engineers", "Hiring: Front-end engineers",
-                "Hiring: QA automation", "Hiring: UX/UI designers",
-                "Hiring: Product managers", "Hiring: TPMs",
+            "Hiring": [
+                "Hiring: OTT/CTV engineers",
+                "Hiring: Front-end engineers",
+                "Hiring: QA automation",
+                "Hiring: UX/UI designers",
+                "Hiring: Product managers",
+                "Hiring: TPMs / delivery leads",
             ],
-            "📈 Commercial": [
-                "Rights deal", "FAST/AVOD launch", "Funding round",
-                "Market expansion", "New streaming partnership",
-                "DTC pivot", "M&A / platform unification",
+            "Commercial & Growth": [
+                "Rights without platform",
+                "FAST/AVOD launch",
+                "Funding round",
+                "Market expansion",
+                "New streaming partnership",
+                "DTC pivot",
+                "M&A / platform unification",
+                "Social-first publisher going owned OTT",
+                "Gaming company entering video",
+                "Post-acquisition integration",
+            ],
+            "⚠️ Risk & Distress": [
+                "RFP activity",
+                "Leadership change in digital/streaming",
+                "Competitor launched on CTV first",
             ],
         }
 
         # ----------------------------------------------------------------
-        # STAGE A — Intake form (wrapped in st.form to prevent per-checkbox reruns)
+        # STAGE A — Intake form (st.form prevents per-widget reruns)
         # ----------------------------------------------------------------
         col_title, col_rand = st.columns([5, 1])
         with col_title:
@@ -961,7 +986,7 @@ else:
                     "APAC": "Asia Pacific",
                 }.get(bu, bu)
                 _new_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(cfg['verticals'])} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {' for atleast one of these verticals: '.join(cfg['verticals'])} companies "
                     f"headquartered in {_bu_label} "
                     f"showing these OTT buying signals: {', '.join(cfg['signals'])}."
                 )
@@ -987,19 +1012,21 @@ else:
             st.caption("**What signals are you looking for?**")
             selected_signals = []
             for group, group_signals in SIGNALS.items():
-                st.markdown(f"*{group}*")
-                s_cols = st.columns(3)
-                for i, s in enumerate(group_signals):
-                    default = s in st.session_state.get("form_signals", [])
-                    if s_cols[i % 3].checkbox(s, value=default, key=f"s_{s}"):
-                        selected_signals.append(s)
+                picked = st.multiselect(
+                    group,
+                    options=group_signals,
+                    default=[s for s in st.session_state.get("form_signals", [])
+                             if s in group_signals],
+                    key=f"ms_{group}",
+                )
+                selected_signals.extend(picked)
 
             st.divider()
             st.caption("**Anything specific to focus on?** *(optional)*")
             context_val = st.text_input(
                 "",
                 value=st.session_state.get("form_context", ""),
-                placeholder="e.g. running on ViewLift, just acquired X, mobile-only right now…",
+                placeholder="e.g. stranded on 24i, just acquired X, mobile-only right now…",
                 key="form_context_input",
                 label_visibility="collapsed",
             )
@@ -1025,7 +1052,7 @@ else:
                 }.get(bu, bu)
 
                 auto_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(selected_verticals)} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {' for atleast one of these verticals: '.join(selected_verticals)} companies "
                     f"headquartered in {bu_label} "
                     f"showing these OTT buying signals: {', '.join(selected_signals)}."
                 )
