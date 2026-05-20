@@ -1029,25 +1029,22 @@ else:
             if context_val.strip():
                 auto_brief += f"\n\nAdditional context: {context_val.strip()}"
 
-            # Use Gemini-enhanced brief if available, otherwise auto-built
-            if "assembled_brief" in st.session_state:
-                brief_default = st.session_state["assembled_brief"].get("brief", auto_brief)
-            else:
-                brief_default = auto_brief
-                # Keep widget in sync with current selections unless user has
-                # manually edited it (detect by comparing to last auto-built value)
-                last_auto = st.session_state.get("last_auto_brief", "")
-                current_widget = st.session_state.get("brief_text_area", "")
-                if current_widget == last_auto or current_widget == "":
-                    st.session_state["brief_text_area"] = auto_brief
-                st.session_state["last_auto_brief"] = auto_brief
+            # Sync brief when selections change
+            _selection_hash = hash((
+                tuple(sorted(brief_verticals)),
+                tuple(sorted(brief_signals)),
+                context_val.strip(),
+                bu,
+            ))
+            if st.session_state.get("last_selection_hash") != _selection_hash:
+                st.session_state["brief_text_area"]     = auto_brief
+                st.session_state["last_selection_hash"] = _selection_hash
 
-            # Optional Gemini enhancement
             st.caption("**Research Brief** — edit before searching if needed")
 
             edited_brief = st.text_area(
                 "",
-                value=brief_default,
+                value=st.session_state.get("brief_text_area", auto_brief),
                 height=160,
                 key="brief_text_area",
                 label_visibility="collapsed",
