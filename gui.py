@@ -916,7 +916,7 @@ else:
 
         VERTICALS = [
             "Sports", "News", "Entertainment", "Faith", "Fitness",
-            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Other",
+            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Micro-drama", "FAST", "Other",
         ]
 
         SIGNALS = {
@@ -924,6 +924,9 @@ else:
                 "First CTV build",
                 "CTV ambition",
                 "Smart TV app launch",
+                "Mobile-only",
+                "Youtube transition to OTT",
+                "Web apps looking for native"
                 "Platform migration",
                 "Stranded vendor customer",
                 "Video player overhaul",
