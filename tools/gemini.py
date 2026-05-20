@@ -9,8 +9,6 @@ Single job: enrich_brief()
 
 import logging
 import os
-import re
-import json
 from typing import List
 
 import requests
@@ -49,49 +47,6 @@ def _call_gemini(prompt: str, max_tokens: int = 1024) -> tuple:
     return raw_text.strip(), usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0)
 
 
-def _extract_json(raw: str):
-    if not raw:
-        raise ValueError("Empty response")
-    text = raw.strip()
-
-    # Strip markdown fences
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
-
-    # Extract outermost { ... }
-    brace = re.search(r"\{.*\}", text, re.DOTALL)
-    if brace:
-        text = brace.group(0)
-
-    # Attempt 1: direct parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Attempt 2: fix common Gemini issues — smart quotes and unescaped apostrophes
-    cleaned = (text
-        .replace("\u2019", "'")   # right single quote
-        .replace("\u2018", "'")   # left single quote
-        .replace("\u201c", '"')   # left double quote
-        .replace("\u201d", '"')   # right double quote
-        .replace("\u2013", "-")   # en dash
-        .replace("\u2014", "-")   # em dash
-    )
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Attempt 3: strip trailing commas before } or ]
-    no_trailing = re.sub(r",\s*([}\]])", r"\1", cleaned)
-    try:
-        return json.loads(no_trailing)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON extraction failed after all attempts: {exc}")
-
-
 def enrich_brief(
     auto_brief: str,
     verticals: List[str],
@@ -118,27 +73,48 @@ def enrich_brief(
     )
 
     try:
-        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=1024)
+        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=512)
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
-        result        = _extract_json(raw)
-        vertical_desc = result.get("vertical_description", "").strip()
-        signal_groups = result.get("signal_groups", [])
-        agg_hint      = result.get("aggregation_hint", "").strip()
+        # Parse plain text response — no JSON, no fragile parsing
+        vertical_desc = ""
+        signal_lines  = ""
+        agg_hint      = ""
 
-        if not vertical_desc or not signal_groups:
-            raise ValueError("Incomplete enrichment response")
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("VERTICAL:"):
+                vertical_desc = line[len("VERTICAL:"):].strip()
+            elif line.startswith("SIGNALS:"):
+                signal_lines = line[len("SIGNALS:"):].strip()
+            elif line.startswith("AGGREGATION:"):
+                agg_hint = line[len("AGGREGATION:"):].strip()
 
-        signal_lines = "\n".join(
-            f"- [{g.get('label', '')}]: {g.get('description', '')}"
-            for g in signal_groups
-        )
+        # Also handle multi-line SIGNALS block
+        if not signal_lines:
+            in_signals = False
+            sig_parts  = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if line.startswith("SIGNALS:"):
+                    in_signals = True
+                    rest = line[len("SIGNALS:"):].strip()
+                    if rest:
+                        sig_parts.append(rest)
+                elif in_signals and line.startswith("AGGREGATION:"):
+                    break
+                elif in_signals and line:
+                    sig_parts.append(line)
+            signal_lines = " | ".join(sig_parts)
+
+        if not vertical_desc:
+            raise ValueError("Could not parse VERTICAL from Gemini response")
 
         enriched = (
             f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical_desc} "
             f"headquartered in {bu_label}.\n\n"
-            f"SIGNAL FOCUS:\n{signal_lines}\n\n"
+            f"SIGNAL FOCUS: {signal_lines}\n\n"
             f"AGGREGATION PRIORITY: {agg_hint}"
         )
 

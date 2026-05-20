@@ -41,7 +41,7 @@ PRICE = {
     "sonnet_input_per_1m":  3.00,
     "sonnet_output_per_1m": 15.00,
     "opus_input_per_1m":   15.00,
-    "opus_output_per_1m":  75.00,
+    "opus_output_per_1m":  25.00,
     # API credits — price per credit
     "exa_per_credit":       0.005,
     "apollo_per_credit":    0.490,

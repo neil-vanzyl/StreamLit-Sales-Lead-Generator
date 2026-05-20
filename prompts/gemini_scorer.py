@@ -37,15 +37,11 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Return ONLY a JSON object, no preamble, no markdown:
-{
-  "vertical_description": "Expanded description of the target company types with industry terminology",
-  "signal_groups": [
-    {"label": "Group name", "description": "What to look for and why it signals Accedo opportunity"},
-    {"label": "Group name", "description": "..."}
-  ],
-  "aggregation_hint": "Single sentence: best industry list/conference/award to search for these verticals"
-}
+Return your response in this exact format and nothing else. No JSON, no markdown, no preamble:
+
+VERTICAL: [expanded description of target company types with industry terminology]
+SIGNALS: [2-3 thematic signal groups, each on one line, format: GroupName: description]
+AGGREGATION: [single sentence naming the best industry list or conference to search]
 """
 
 # ---------------------------------------------------------------------------
