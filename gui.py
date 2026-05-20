@@ -919,7 +919,7 @@ else:
         }
 
         # ----------------------------------------------------------------
-        # STAGE A — Intake form
+        # STAGE A — Intake form (wrapped in st.form to prevent per-checkbox reruns)
         # ----------------------------------------------------------------
         col_title, col_rand = st.columns([5, 1])
         with col_title:
@@ -931,15 +931,10 @@ else:
                 import random as _random
                 cfg = _random.choice(RANDOM_CONFIGS)
 
-                # Update form tracking state
-                st.session_state["form_verticals"]      = cfg["verticals"]
-                st.session_state["form_signals"]        = cfg["signals"]
-                st.session_state["form_context"]        = cfg["context"]
-                st.session_state["form_signals_live"]   = cfg["signals"]
-                st.session_state["form_verticals_live"] = cfg["verticals"]
+                st.session_state["form_verticals"] = cfg["verticals"]
+                st.session_state["form_signals"]   = cfg["signals"]
+                st.session_state["form_context"]   = cfg["context"]
 
-                # Build the new brief now and write directly to the widget key
-                # so the text area reflects the new values immediately
                 _bu_label = {
                     "NAM": "North America (US, Canada, Mexico)",
                     "E&L": "Europe or Latin America",
@@ -952,104 +947,94 @@ else:
                 )
                 if cfg.get("context"):
                     _new_brief += f"\n\nAdditional context: {cfg['context']}"
-                st.session_state["brief_text_area"] = _new_brief
-                st.session_state["form_context_input"] = cfg["context"]
+                st.session_state["brief_text_area"]     = _new_brief
+                st.session_state["last_selection_hash"] = None
 
-                # Set each checkbox widget state directly
-                for _v in VERTICALS:
-                    st.session_state[f"v_{_v}"] = _v in cfg["verticals"]
-                for _group_signals in SIGNALS.values():
-                    for _s in _group_signals:
-                        st.session_state[f"s_{_s}"] = _s in cfg["signals"]
-
-                # Clear downstream state only
-                for key in ["assembled_brief", "sweep_result",
-                            "grok_prospects", "enrichment_selections"]:
+                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
-
                 st.rerun()
 
-        st.caption("**What kind of company are you hunting?**")
-        selected_verticals = []
-        v_cols = st.columns(4)
-        for i, v in enumerate(VERTICALS):
-            default = v in st.session_state.get("form_verticals", [])
-            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
-                selected_verticals.append(v)
+        with st.form("discovery_form"):
+            st.caption("**What kind of company are you hunting?**")
+            selected_verticals = []
+            v_cols = st.columns(4)
+            for i, v in enumerate(VERTICALS):
+                default = v in st.session_state.get("form_verticals", [])
+                if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
+                    selected_verticals.append(v)
 
-        st.divider()
-        st.caption("**What signals are you looking for?**")
-        selected_signals = []
-        for group, group_signals in SIGNALS.items():
-            st.markdown(f"*{group}*")
-            s_cols = st.columns(3)
-            for i, s in enumerate(group_signals):
-                default = s in st.session_state.get("form_signals", [])
-                if s_cols[i % 3].checkbox(s, value=default, key=f"s_{s}"):
-                    selected_signals.append(s)
+            st.divider()
+            st.caption("**What signals are you looking for?**")
+            selected_signals = []
+            for group, group_signals in SIGNALS.items():
+                st.markdown(f"*{group}*")
+                s_cols = st.columns(3)
+                for i, s in enumerate(group_signals):
+                    default = s in st.session_state.get("form_signals", [])
+                    if s_cols[i % 3].checkbox(s, value=default, key=f"s_{s}"):
+                        selected_signals.append(s)
 
-        st.divider()
-        st.caption("**Anything specific to focus on?** *(optional)*")
-        context_val = st.text_input(
-            "",
-            value=st.session_state.get("form_context", ""),
-            placeholder="e.g. running on ViewLift, just acquired X, mobile-only right now…",
-            key="form_context_input",
-            label_visibility="collapsed",
-        )
-        st.divider()
-
-        form_ready = bool(selected_verticals and selected_signals)
-
-        if not form_ready:
-            st.caption("Select at least one vertical and one signal to continue.")
-
-        # Build query directly from form selections — no LLM needed
-        if form_ready:
-            bu_label = {
-                "NAM":  "North America (US, Canada, Mexico)",
-                "E&L":  "Europe or Latin America",
-                "APAC": "Asia Pacific",
-            }.get(bu, bu)
-
-            # Read from previous render's persisted values for the brief
-            # Fall back to current render values only if nothing persisted yet
-            brief_signals   = st.session_state.get("form_signals_live", selected_signals)
-            brief_verticals = st.session_state.get("form_verticals", selected_verticals)
-
-            # Now persist current render values for the NEXT render
-            st.session_state["form_signals_live"]    = selected_signals
-            st.session_state["form_verticals_live"]  = selected_verticals
-
-            auto_brief = (
-                f"Find Tier 1 and Tier 2 {', '.join(brief_verticals)} companies "
-                f"headquartered in {bu_label} "
-                f"showing these OTT buying signals: {', '.join(brief_signals)}."
+            st.divider()
+            st.caption("**Anything specific to focus on?** *(optional)*")
+            context_val = st.text_input(
+                "",
+                value=st.session_state.get("form_context", ""),
+                placeholder="e.g. running on ViewLift, just acquired X, mobile-only right now…",
+                key="form_context_input",
+                label_visibility="collapsed",
             )
-            if context_val.strip():
-                auto_brief += f"\n\nAdditional context: {context_val.strip()}"
 
-            # Sync brief when selections change
-            _selection_hash = hash((
-                tuple(sorted(brief_verticals)),
-                tuple(sorted(brief_signals)),
-                context_val.strip(),
-                bu,
-            ))
-            if st.session_state.get("last_selection_hash") != _selection_hash:
+            form_submitted = st.form_submit_button(
+                "✨ Build Brief",
+                use_container_width=True,
+            )
+
+        # Process form submission — runs once when rep clicks Build Brief
+        if form_submitted:
+            if not selected_verticals or not selected_signals:
+                st.warning("Select at least one vertical and one signal.")
+            else:
+                st.session_state["form_verticals"] = selected_verticals
+                st.session_state["form_signals"]   = selected_signals
+                st.session_state["form_context"]   = context_val
+
+                bu_label = {
+                    "NAM":  "North America (US, Canada, Mexico)",
+                    "E&L":  "Europe or Latin America",
+                    "APAC": "Asia Pacific",
+                }.get(bu, bu)
+
+                auto_brief = (
+                    f"Find Tier 1 and Tier 2 {', '.join(selected_verticals)} companies "
+                    f"headquartered in {bu_label} "
+                    f"showing these OTT buying signals: {', '.join(selected_signals)}."
+                )
+                if context_val.strip():
+                    auto_brief += f"\n\nAdditional context: {context_val.strip()}"
+
                 st.session_state["brief_text_area"]     = auto_brief
-                st.session_state["last_selection_hash"] = _selection_hash
+                st.session_state["last_selection_hash"] = hash((
+                    tuple(sorted(selected_verticals)),
+                    tuple(sorted(selected_signals)),
+                    context_val.strip(), bu,
+                ))
+                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
+                    st.session_state.pop(key, None)
 
+        # ----------------------------------------------------------------
+        # STAGE B — Brief display + Find Companies (shown after form submit)
+        # ----------------------------------------------------------------
+        if st.session_state.get("brief_text_area"):
+            st.divider()
             st.caption("**Research Brief** — edit before searching if needed")
 
             edited_brief = st.text_area(
                 "",
-                value=st.session_state.get("brief_text_area", auto_brief),
+                value=st.session_state.get("brief_text_area", ""),
                 height=160,
                 key="brief_text_area",
                 label_visibility="collapsed",
             )
-
 
             sweep_btn = st.button(
                 "🔍 Find Companies",
@@ -1062,10 +1047,6 @@ else:
             # ---- Discovery sweep ----
             if sweep_btn:
                 _apply_model_overrides()
-                st.session_state["form_verticals"] = selected_verticals
-                st.session_state["form_signals"]   = selected_signals
-                st.session_state["form_context"]   = context_val
-                st.session_state["form_signals_live"] = selected_signals
                 for key in ["sweep_result", "company_selections",
                             "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
