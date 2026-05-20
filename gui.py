@@ -1105,163 +1105,142 @@ else:
                 )
 
                 # Initialise selections — all unchecked by default
-                # (rep chooses, not pre-selected)
                 if "company_selections" not in st.session_state:
                     st.session_state["company_selections"] = {
                         c.get("name", ""): False for c in companies
                     }
 
-                selected_count = sum(
-                    st.session_state["company_selections"].values()
-                )
+                with st.form("company_selection_form"):
+                    for company in companies:
+                        name        = company.get("name", "")
+                        evidence    = company.get("evidence", "")
+                        signal_type = company.get("signal_type", "")
+                        source_url  = company.get("source_url", "")
+                        hq          = company.get("hq_country", "")
 
-                for company in companies:
-                    name        = company.get("name", "")
-                    evidence    = company.get("evidence", "")
-                    signal_type = company.get("signal_type", "")
-                    source_url  = company.get("source_url", "")
-                    hq          = company.get("hq_country", "")
+                        col_check, col_info = st.columns([1, 10])
+                        with col_check:
+                            current = st.session_state["company_selections"].get(name, False)
+                            checked = st.checkbox(
+                                "", value=current,
+                                key=f"sel_{name}",
+                                label_visibility="collapsed",
+                            )
+                        with col_info:
+                            name_md = f"[{name}]({source_url})" if source_url else name
+                            meta    = f" · {hq}" if hq else ""
+                            badge   = f"`{signal_type}`" if signal_type else ""
+                            st.markdown(f"**{name_md}**{meta}  {badge}")
+                            if evidence:
+                                st.caption(evidence)
 
-                    col_check, col_info = st.columns([1, 10])
-                    with col_check:
-                        current  = st.session_state["company_selections"].get(name, False)
-                        disabled = selected_count >= 5 and not current
-                        checked  = st.checkbox(
-                            "", value=current,
-                            key=f"sel_{name}",
-                            disabled=disabled,
-                            label_visibility="collapsed",
-                        )
-                        st.session_state["company_selections"][name] = checked
-                        if checked != current:
-                            st.rerun()
+                    research_submitted = st.form_submit_button(
+                        "🔬 Research Selected Companies",
+                        use_container_width=True,
+                        type="primary",
+                    )
 
-                    with col_info:
-                        name_md = f"[{name}]({source_url})" if source_url else name
-                        meta    = f" · {hq}" if hq else ""
-                        badge   = f"`{signal_type}`" if signal_type else ""
-                        st.markdown(f"**{name_md}**{meta}  {badge}")
-                        if evidence:
-                            st.caption(evidence)
-
-                selected_count = sum(
-                    st.session_state["company_selections"].values()
-                )
-                st.caption(f"{selected_count}/5 selected for deep research")
-
-                research_btn = st.button(
-                    f"🔬 Deep Research {selected_count} Selected "
-                    f"{'Company' if selected_count == 1 else 'Companies'}"
-                    if selected_count > 0
-                    else "⬆️ Select companies above to research",
-                    type="primary",
-                    use_container_width=True,
-                    key="research_btn",
-                    disabled=selected_count == 0,
-                )
-
-                # ----------------------------------------------------------------
-                # STAGE D — Per-company deep research with live progress
-                # ----------------------------------------------------------------
-                if research_btn:
-                    _apply_model_overrides()
-                    st.session_state.pop("grok_prospects", None)
-                    st.session_state.pop("enrichment_selections", None)
-
+                # Process selections after form submit
+                if research_submitted:
+                    # Collect checked companies from form widget state
                     selected_companies = [
                         c for c in companies
-                        if st.session_state["company_selections"].get(
-                            c.get("name", ""), False
-                        )
+                        if st.session_state.get(f"sel_{c.get('name', '')}", False)
                     ]
-                    total = len(selected_companies)
-                    brief = st.session_state.get("sweep_brief", "")
-                    run_id = sweep_result.get("run_id", "")
+                    # Update company_selections session state
+                    for c in companies:
+                        n = c.get("name", "")
+                        st.session_state["company_selections"][n] = st.session_state.get(f"sel_{n}", False)
 
-                    st.divider()
-                    st.subheader(f"🔬 Researching {total} {'company' if total == 1 else 'companies'}…")
+                    selected_count = len(selected_companies)
+                    if selected_count == 0:
+                        st.warning("⬆️ Select at least one company above.")
+                    else:
+                        st.caption(f"{selected_count} selected for deep research")
+                        _apply_model_overrides()
+                        st.session_state.pop("grok_prospects", None)
+                        st.session_state.pop("enrichment_selections", None)
 
-                    # One placeholder per company — updated as each completes
-                    placeholders = {}
-                    for company in selected_companies:
-                        name = company.get("name", "")
-                        placeholders[name] = st.empty()
-                        # Show queued state immediately
-                        placeholders[name].markdown(
-                            f"⬜ **{name}** · queued"
-                        )
+                        total  = selected_count
+                        brief  = st.session_state.get("sweep_brief", "")
+                        run_id = sweep_result.get("run_id", "")
 
-                    completed_prospects = []
+                        st.divider()
+                        st.subheader(f"🔬 Researching {total} {'company' if total == 1 else 'companies'}…")
 
-                    def _on_start(name, idx, total):
-                        placeholders[name].markdown(
-                            f"⏳ **{name}** · researching now… "
-                            f"*({idx}/{total})*"
-                        )
+                        placeholders = {}
+                        for company in selected_companies:
+                            name = company.get("name", "")
+                            placeholders[name] = st.empty()
+                            placeholders[name].markdown(f"⬜ **{name}** · queued")
 
-                    def _on_done(name, prospect, idx, total):
-                        score   = prospect.get("opportunity_score") or 0
-                        verdict = "HOT 🔥" if score >= 70 else "WARM ♨️" if score >= 50 else "COLD ❄️"
-                        opp     = prospect.get("opportunity_type", "")
-                        err     = prospect.get("error")
-                        if err:
+                        completed_prospects = []
+
+                        def _on_start(name, idx, total):
                             placeholders[name].markdown(
-                                f"❌ **{name}** · research failed — {err}"
+                                f"⏳ **{name}** · researching now… *({idx}/{total})*"
                             )
-                        else:
-                            placeholders[name].markdown(
-                                f"✅ **{name}** · "
-                                f"**{score}** · {verdict}"
-                                + (f" · *{opp}*" if opp else "")
+
+                        def _on_done(name, prospect, idx, total):
+                            score   = prospect.get("opportunity_score") or 0
+                            verdict = "HOT 🔥" if score >= 70 else "WARM ♨️" if score >= 50 else "COLD ❄️"
+                            opp     = prospect.get("opportunity_type", "")
+                            err     = prospect.get("error")
+                            if err:
+                                placeholders[name].markdown(f"❌ **{name}** · research failed — {err}")
+                            else:
+                                placeholders[name].markdown(
+                                    f"✅ **{name}** · **{score}** · {verdict}"
+                                    + (f" · *{opp}*" if opp else "")
+                                )
+                            completed_prospects.append(prospect)
+
+                        try:
+                            _sweep_usage  = st.session_state.get("sweep_usage")
+                            _sweep_sheets = st.session_state.get("sweep_sheets")
+
+                            grok_result = main.run_grok_only(
+                                query=brief,
+                                bu=bu,
+                                selected_companies=selected_companies,
+                                run_id=run_id,
+                                on_company_start=_on_start,
+                                on_company_done=_on_done,
+                                usage=_sweep_usage,
+                                sheets=_sweep_sheets,
                             )
-                        completed_prospects.append(prospect)
+                            all_prospects = grok_result.get("prospects", [])
 
-                    try:
-                        # Pass sweep's usage+sheets so Grok tokens accumulate
-                        # in the same RunUsage instance from discovery
-                        _sweep_usage  = st.session_state.get("sweep_usage")
-                        _sweep_sheets = st.session_state.get("sweep_sheets")
+                            st.session_state["grok_prospects"]  = all_prospects
+                            st.session_state["grok_run_id"]     = run_id
+                            st.session_state["grok_query"]      = brief
+                            st.session_state["grok_usage"]      = grok_result.get("usage")
+                            st.session_state["grok_sheets"]     = grok_result.get("sheets")
+                            st.session_state["grok_discovery"]  = {
+                                "discovery_ran": True,
+                                "gemini_ran":    True,
+                                "all_found":     [],
+                                "selected":      [],
+                                "rejected":      [],
+                                "search_strings": [],
+                            }
 
-                        grok_result = main.run_grok_only(
-                            query=brief,
-                            bu=bu,
-                            selected_companies=selected_companies,
-                            run_id=run_id,
-                            on_company_start=_on_start,
-                            on_company_done=_on_done,
-                            usage=_sweep_usage,
-                            sheets=_sweep_sheets,
-                        )
-                        all_prospects = grok_result.get("prospects", [])
+                            _interim_usage = grok_result.get("usage")
+                            if _interim_usage:
+                                _interim_snapshot = _interim_usage.summary()
+                                st.session_state["grok_interim_usage"] = _interim_snapshot
 
-                        # Store usage+sheets for the enrichment stage
-                        st.session_state["grok_prospects"]  = all_prospects
-                        st.session_state["grok_run_id"]     = run_id
-                        st.session_state["grok_query"]      = brief
-                        st.session_state["grok_usage"]      = grok_result.get("usage")
-                        st.session_state["grok_sheets"]     = grok_result.get("sheets")
-                        st.session_state["grok_discovery"]  = {
-                            "discovery_ran": True,
-                            "gemini_ran":    True,
-                            "all_found":     [],
-                            "selected":      [],
-                            "rejected":      [],
-                            "search_strings": [],
-                        }
+                            st.success(
+                                f"✅ Research complete — "
+                                f"{len(all_prospects)} prospects ready for enrichment"
+                            )
 
-                        # Show interim usage after deep research
-                        _interim_usage = grok_result.get("usage")
-                        if _interim_usage:
-                            _interim_usage.finish()
-                            render_usage_panel(_interim_usage.summary())
-
-                        st.success(
-                            f"✅ Research complete — "
-                            f"{len(all_prospects)} prospects ready for enrichment"
-                        )
-                    except Exception as exc:
-                        st.error(f"**Research error:** {exc}")
-                        st.exception(exc)
+                            _snapshot = st.session_state.get("grok_interim_usage")
+                            if _snapshot:
+                                render_usage_panel(_snapshot)
+                        except Exception as exc:
+                            st.error(f"**Research error:** {exc}")
+                            st.exception(exc)
 
         # ----------------------------------------------------------------
         # STAGE E — Enrichment selection (unchanged from before)
@@ -1282,182 +1261,129 @@ else:
                     for p in grok_prospects
                 }
 
-            for prospect in grok_prospects:
-                name     = prospect.get("name", "")
-                score    = prospect.get("opportunity_score") or 0
-                verdict  = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
-                opp_type = prospect.get("opportunity_type", "")
-                gap      = prospect.get("transition_gap_timer", "")
+            with st.form("enrichment_selection_form"):
+                for prospect in grok_prospects:
+                    name     = prospect.get("name", "")
+                    score    = prospect.get("opportunity_score") or 0
+                    verdict  = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
+                    opp_type = prospect.get("opportunity_type", "")
+                    gap      = prospect.get("transition_gap_timer", "")
 
-                col_check, col_score, col_info = st.columns([1, 2, 8])
-                with col_check:
-                    current = st.session_state["enrichment_selections"].get(name, False)
-                    checked = st.checkbox(
-                        "", value=current,
-                        key=f"enrich_{name}",
-                        label_visibility="collapsed",
-                    )
-                    st.session_state["enrichment_selections"][name] = checked
-                with col_score:
-                    st.markdown(_score_bar_html(score), unsafe_allow_html=True)
-                    st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
-                with col_info:
-                    detail = f"*{opp_type}*" if opp_type else ""
-                    if gap:
-                        detail += f" · {gap}"
-                    st.markdown(
-                        f"**{name}**  \n{detail}" if detail else f"**{name}**"
-                    )
+                    col_check, col_score, col_info = st.columns([1, 2, 8])
+                    with col_check:
+                        current = st.session_state["enrichment_selections"].get(name, False)
+                        st.checkbox(
+                            "", value=current,
+                            key=f"enrich_{name}",
+                            label_visibility="collapsed",
+                        )
+                    with col_score:
+                        st.markdown(_score_bar_html(score), unsafe_allow_html=True)
+                        st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
+                    with col_info:
+                        detail = f"*{opp_type}*" if opp_type else ""
+                        if gap:
+                            detail += f" · {gap}"
+                        st.markdown(
+                            f"**{name}**  \n{detail}" if detail else f"**{name}**"
+                        )
 
-            enrichment_count = sum(
-                st.session_state["enrichment_selections"].values()
-            )
-            st.caption(
-                f"{enrichment_count} selected for enrichment · "
-                f"{len(grok_prospects) - enrichment_count} archived to Cold Leads"
-            )
+                enrich_submitted = st.form_submit_button(
+                    "🚀 Enrich & Draft Outreach for Selected",
+                    type="primary",
+                    use_container_width=True,
+                )
 
-            enrich_btn = st.button(
-                f"🚀 Enrich & Draft Outreach for {enrichment_count} Selected"
-                if enrichment_count > 0
-                else "⬆️ Select at least one company above",
-                type="primary",
-                use_container_width=True,
-                key="enrich_btn",
-                disabled=enrichment_count == 0,
-            )
-
-            if enrich_btn:
-                _apply_model_overrides()
+            if enrich_submitted:
+                # Collect selections from form widget state
                 enrichment_names = {
-                    name for name, sel
-                    in st.session_state["enrichment_selections"].items()
-                    if sel
+                    p.get("name", "") for p in grok_prospects
+                    if st.session_state.get(f"enrich_{p.get('name', '')}", False)
                 }
-                log_stream = st.session_state.get("log_stream")
-                if log_stream:
-                    log_stream.truncate(0)
-                    log_stream.seek(0)
+                # Update session state
+                for p in grok_prospects:
+                    n = p.get("name", "")
+                    st.session_state["enrichment_selections"][n] = n in enrichment_names
 
-                with st.status(
-                    f"Enriching {enrichment_count} prospect(s)…",
-                    expanded=True,
-                ) as status:
-                    st.write(
-                        "🔗 Apollo → Exa exec intel → "
-                        "Claude Sonnet → Claude Opus → Sheets…"
-                    )
-                    try:
-                        from core.sheets import SheetsClient
-                        from utils.auth import get_current_user
-                        director = get_current_user() or "Unknown"
+                enrichment_count = len(enrichment_names)
+                st.caption(
+                    f"{enrichment_count} selected for enrichment · "
+                    f"{len(grok_prospects) - enrichment_count} archived to Cold Leads"
+                )
+                if enrichment_count == 0:
+                    st.warning("⬆️ Select at least one company above.")
+                else:
+                    _apply_model_overrides()
+                    log_stream = st.session_state.get("log_stream")
+                    if log_stream:
+                        log_stream.truncate(0)
+                        log_stream.seek(0)
 
-                        # Reuse usage+sheets threaded from sweep → grok
-                        _grok_usage  = st.session_state.get("grok_usage")
-                        _grok_sheets = st.session_state.get("grok_sheets") or SheetsClient()
-
-                        results = main.run_enrichment_from_selection(
-                            query=st.session_state.get("grok_query", ""),
-                            bu=bu,
-                            all_prospects=grok_prospects,
-                            enrichment_names=enrichment_names,
-                            run_id=st.session_state.get("grok_run_id", ""),
-                            dry_run=is_dry_run,
-                            discovery=st.session_state.get("grok_discovery"),
-                            usage=_grok_usage,
-                            sheets=_grok_sheets,
+                    with st.status(
+                        f"Enriching {enrichment_count} prospect(s)…",
+                        expanded=True,
+                    ) as status:
+                        st.write(
+                            "🔗 Apollo → Exa exec intel → "
+                            "Claude Sonnet → Claude Opus → Sheets…"
                         )
-                        # Write usage row with fully accumulated cost
-                        if results and not is_dry_run:
-                            usage_sum = results[0].get("usage_summary", {})
-                            if usage_sum:
-                                try:
-                                    _grok_sheets.write_usage(
-                                        run_id=st.session_state.get("grok_run_id", ""),
-                                        director=director,
-                                        track="Discovery",
-                                        query=st.session_state.get("grok_query", "")[:120],
-                                        companies_researched=len(enrichment_names),
-                                        usage_summary=usage_sum,
-                                        bu=bu,
-                                    )
-                                except Exception as ue:
-                                    logger.warning(f"Usage write failed: {ue}")
-                        status.update(
-                            label="✅ Enrichment complete!",
-                            state="complete", expanded=False,
+                        try:
+                            from core.sheets import SheetsClient
+                            from utils.auth import get_current_user
+                            director = get_current_user() or "Unknown"
+
+                            _grok_usage  = st.session_state.get("grok_usage")
+                            _grok_sheets = st.session_state.get("grok_sheets") or SheetsClient()
+
+                            results = main.run_enrichment_from_selection(
+                                query=st.session_state.get("grok_query", ""),
+                                bu=bu,
+                                all_prospects=grok_prospects,
+                                enrichment_names=enrichment_names,
+                                run_id=st.session_state.get("grok_run_id", ""),
+                                dry_run=is_dry_run,
+                                discovery=st.session_state.get("grok_discovery"),
+                                usage=_grok_usage,
+                                sheets=_grok_sheets,
+                            )
+                            if results and not is_dry_run:
+                                usage_sum = results[0].get("usage_summary", {})
+                                if usage_sum:
+                                    try:
+                                        _grok_sheets.write_usage(
+                                            run_id=st.session_state.get("grok_run_id", ""),
+                                            director=director,
+                                            track="Discovery",
+                                            query=st.session_state.get("grok_query", "")[:120],
+                                            companies_researched=len(enrichment_names),
+                                            usage_summary=usage_sum,
+                                            bu=bu,
+                                        )
+                                    except Exception as ue:
+                                        logger.warning(f"Usage write failed: {ue}")
+                            status.update(
+                                label="✅ Enrichment complete!",
+                                state="complete", expanded=False,
+                            )
+                        except Exception as exc:
+                            status.update(
+                                label="❌ Enrichment error",
+                                state="error", expanded=True,
+                            )
+                            st.error(f"**Error:** {exc}")
+                            st.exception(exc)
+                            results = []
+
+                    if results:
+                        for key in ["grok_prospects", "enrichment_selections",
+                                    "sweep_result", "company_selections",
+                                    "grok_usage", "grok_sheets",
+                                    "sweep_usage", "sweep_sheets"]:
+                            st.session_state.pop(key, None)
+                        _display_results(
+                            results, is_dry_run,
+                            st.session_state.get("grok_query", ""), bu,
                         )
-                    except Exception as exc:
-                        status.update(
-                            label="❌ Enrichment error",
-                            state="error", expanded=True,
-                        )
-                        st.error(f"**Error:** {exc}")
-                        st.exception(exc)
-                        results = []
-
-                if results:
-                    for key in ["grok_prospects", "enrichment_selections",
-                                "sweep_result", "company_selections",
-                                "grok_usage", "grok_sheets",
-                                "sweep_usage", "sweep_sheets"]:
-                        st.session_state.pop(key, None)
-                    _display_results(
-                        results, is_dry_run,
-                        st.session_state.get("grok_query", ""), bu,
-                    )
-
-
-
-        VERTICALS = [
-            "Sports", "News", "Entertainment", "Faith", "Fitness",
-            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Other",
-        ]
-
-        SIGNALS = {
-            "🏗️ OTT / CTV": [
-                "First CTV build",
-                "CTV expansion",
-                "Smart TV app launch",
-                "Platform migration",
-                "Vendor migration",
-                "Video player overhaul",
-                "App store complaints",
-                "RFP activity",
-                "SSAI/DRM change",
-            ],
-            "🎨 Product / UX": [
-                "App redesign",
-                "Rebrand",
-                "Platform consolidation",
-                "Leadership change",
-                "New product/UX leadership",
-            ],
-            "👥 Hiring": [
-                "Hiring: OTT/CTV engineers",
-                "Hiring: Front-end engineers",
-                "Hiring: QA automation",
-                "Hiring: UX/UI designers",
-                "Hiring: Product managers",
-                "Hiring: TPMs",
-            ],
-            "📈 Commercial": [
-                "Rights deal",
-                "FAST/AVOD launch",
-                "Funding round",
-                "Market expansion",
-                "New streaming partnership",
-                "DTC pivot",
-                "M&A / platform unification",
-            ],
-        }
-
-        # Randomizer button
-        col_title, col_rand = st.columns([5, 1])
-        with col_title:
-            st.markdown("#### Find Companies")
-
-
     # -----------------------------------------------------------------------
     # COMPANY ENRICHMENT TAB
     # -----------------------------------------------------------------------
