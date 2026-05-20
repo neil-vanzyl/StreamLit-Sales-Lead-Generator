@@ -306,9 +306,8 @@ SIGNAL QUALITY — prefer but do not exclusively return:
 
 STRICT REQUIREMENT:
 - hq_country is REQUIRED for every company — skip any company you cannot confirm HQ for
-- No fabrication — every company must appear in a real source you found
 - No duplicate parent/subsidiary pairs
-- AIM FOR 10 COMPANIES — return all candidates, let the rep decide
+- AIM FOR 10 COMPANIES and provide a minimum of 7 — return all candidates, let the rep decide
 - Tier 1, Tier 2, and ambitious Tier 3 are all acceptable
 
 Return ONLY this JSON, zero preamble, zero markdown:
