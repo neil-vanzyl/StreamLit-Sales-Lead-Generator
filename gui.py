@@ -1069,17 +1069,22 @@ else:
                             label=f"✅ Found {len(companies)} companies — select which to research",
                             state="complete", expanded=False,
                         )
-                        # Show discovery sweep cost
-                        
+                        # Store summary for display outside the status block
+                        _sweep_u = sweep.get("usage")
                         if _sweep_u:
                             try:
                                 _sweep_u.finish()
                                 st.session_state["sweep_usage_summary"] = _sweep_u.summary()
                             except Exception:
                                 pass
+                    except Exception as exc:
+                        status.update(label="❌ Error", state="error", expanded=True)
+                        st.error(f"**Error:** {exc}")
+                        st.exception(exc)
 
-                        if st.session_state.get("sweep_usage_summary"):
-                            render_usage_panel(st.session_state["sweep_usage_summary"])
+                # Render sweep cost outside the collapsible status block
+                if st.session_state.get("sweep_usage_summary"):
+                    render_usage_panel(st.session_state["sweep_usage_summary"])
 
         # ----------------------------------------------------------------
         # STAGE C — Company selection
