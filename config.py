@@ -74,7 +74,7 @@ GEMINI_DISCOVERY_MAX_TOKENS: int = 2048
 # ---------------------------------------------------------------------------
 # Model selection
 # ---------------------------------------------------------------------------
-GROK_SCOUT_MODEL: str = "grok-4.3"
+GROK_SCOUT_MODEL: str = "grok-4-1-fast-reasoning"
 GROK_SCOUT_MAX_TOKENS: int = 10000
 
 CLAUDE_ANALYST_MODEL: str = "claude-sonnet-4-5"
@@ -82,77 +82,6 @@ CLAUDE_ANALYST_MAX_TOKENS: int = 2048
 
 CLAUDE_COPYWRITER_MODEL: str = "claude-opus-4-5"
 CLAUDE_COPYWRITER_MAX_TOKENS: int = 2048
-
-# ---------------------------------------------------------------------------
-# Model registry — used by GUI model selector
-# Costs are per 1M tokens (input, output) in USD
-# ---------------------------------------------------------------------------
-MODEL_OPTIONS: dict = {
-    "grok": [
-        {
-            "label": "Grok 4.3  ·  recommended",
-            "model": "grok-4.3",
-            "input_cost":  1.25,
-            "output_cost": 2.50,
-            "note": "Latest stable — web search + X search + reasoning",
-        },
-        {
-            "label": "Grok 4.20  ·  flagship",
-            "model": "grok-4.20",
-            "input_cost":  1.25,
-            "output_cost": 2.50,
-            "note": "Highest reasoning depth — same price, slower",
-        },
-    ],
-    "gemini": [
-        {
-            "label": "Gemini Flash  ·  recommended",
-            "model": "gemini-3-flash-preview",
-            "input_cost":  0.075,
-            "output_cost": 0.30,
-            "note": "Fast, cheap — used for query translation + company scoring",
-        },
-        {
-            "label": "Gemini Pro  ·  deeper reasoning",
-            "model": "gemini-2.5-pro",
-            "input_cost":  1.25,
-            "output_cost": 5.00,
-            "note": "Better for ambiguous or complex discovery queries",
-        },
-    ],
-    "analyst": [
-        {
-            "label": "Claude Sonnet 4.5  ·  recommended",
-            "model": "claude-sonnet-4-5",
-            "input_cost":  3.00,
-            "output_cost": 15.00,
-            "note": "Cost-effective qualification scoring — runs per prospect",
-        },
-        {
-            "label": "Claude Opus 4.5  ·  highest quality",
-            "model": "claude-opus-4-5",
-            "input_cost":  15.00,
-            "output_cost": 75.00,
-            "note": "Premium reasoning — use when score accuracy is critical",
-        },
-    ],
-    "copywriter": [
-        {
-            "label": "Claude Opus 4.5  ·  recommended",
-            "model": "claude-opus-4-5",
-            "input_cost":  15.00,
-            "output_cost": 75.00,
-            "note": "Best email quality — runs per HOT/WARM prospect",
-        },
-        {
-            "label": "Claude Sonnet 4.5  ·  faster & cheaper",
-            "model": "claude-sonnet-4-5",
-            "input_cost":  3.00,
-            "output_cost": 15.00,
-            "note": "Good quality at lower cost — useful for high-volume runs",
-        },
-    ],
-}
 
 # ---------------------------------------------------------------------------
 # Exa — LinkedIn post intelligence
@@ -182,6 +111,28 @@ BUILTWITH_API_KEY: str = os.environ.get("BUILTWITH_API_KEY", "")
 # ---------------------------------------------------------------------------
 BU_OPTIONS: List[str] = ["NAM", "E&L", "APAC"]
 BU_DEFAULT: str = "NAM"
+
+# ---------------------------------------------------------------------------
+# Sales Director configuration
+# ---------------------------------------------------------------------------
+SALES_DIRECTORS: List[str] = [
+    "Select your name...",
+    "Director 1",
+    "Director 2",
+    "Director 3",
+    "Director 4",
+    "Director 5",
+]
+
+DIRECTOR_BUDGET_USD: float = 75.00   # monthly budget per director
+
+# New worksheet names
+GOOGLE_USAGE_TRACKER_WORKSHEET_NAME: str = os.environ.get(
+    "GOOGLE_USAGE_TRACKER_WORKSHEET_NAME", "Usage Tracker"
+)
+GOOGLE_ENRICHMENT_WORKSHEET_NAME: str = os.environ.get(
+    "GOOGLE_ENRICHMENT_WORKSHEET_NAME", "Company Enrichment"
+)
 
 # ---------------------------------------------------------------------------
 # Pipeline behaviour

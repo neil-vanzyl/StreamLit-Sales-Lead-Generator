@@ -682,6 +682,30 @@ with st.sidebar:
     st.divider()
 
     # -----------------------------------------------------------------------
+    # Sales Director selector
+    # -----------------------------------------------------------------------
+    from utils.auth import get_current_user, render_budget_bar
+    from core.sheets import SheetsClient as _SC
+
+    selected_director = st.selectbox(
+        "👤 Sales Director",
+        options=config.SALES_DIRECTORS,
+        index=config.SALES_DIRECTORS.index(
+            st.session_state.get("selected_director", config.SALES_DIRECTORS[0])
+        ),
+        key="selected_director",
+        help="Select your name to track usage and budget",
+    )
+
+    if selected_director and selected_director != config.SALES_DIRECTORS[0]:
+        try:
+            _sc = _SC()
+            render_budget_bar(selected_director, _sc)
+        except Exception:
+            st.caption("Budget data unavailable")
+    st.divider()
+
+    # -----------------------------------------------------------------------
     # Model selector
     # -----------------------------------------------------------------------
     with st.expander("⚙️ Model Configuration", expanded=False):
@@ -856,7 +880,9 @@ else:
     # ---------------------------------------------------------------------------
     # Two-track tabs
     # ---------------------------------------------------------------------------
-    tab_discovery, tab_accounts = st.tabs(["🔍 Discovery", "📋 Account Intelligence"])
+    tab_discovery, tab_enrichment, tab_accounts = st.tabs([
+        "🔍 Discovery", "🏢 Company Enrichment", "📋 Account Intelligence"
+    ])
 
     # -----------------------------------------------------------------------
     # DISCOVERY TAB
@@ -1365,8 +1391,10 @@ else:
                     )
                     try:
                         from core.sheets import SheetsClient
-                        sc = SheetsClient()
-                        results = main.run_enrichment_from_selection(
+                        from utils.auth import get_current_user
+                        sc       = SheetsClient()
+                        director = get_current_user() or "Unknown"
+                        results  = main.run_enrichment_from_selection(
                             query=st.session_state.get("grok_query", ""),
                             bu=bu,
                             all_prospects=grok_prospects,
@@ -1376,6 +1404,22 @@ else:
                             discovery=st.session_state.get("grok_discovery"),
                             sheets=sc,
                         )
+                        # Write usage row
+                        if results and not is_dry_run:
+                            usage_sum = results[0].get("usage_summary", {})
+                            if usage_sum:
+                                try:
+                                    sc.write_usage(
+                                        run_id=st.session_state.get("grok_run_id", ""),
+                                        director=director,
+                                        track="Discovery",
+                                        query=st.session_state.get("grok_query", "")[:120],
+                                        companies_researched=len(enrichment_names),
+                                        usage_summary=usage_sum,
+                                        bu=bu,
+                                    )
+                                except Exception as ue:
+                                    logger.warning(f"Usage write failed: {ue}")
                         status.update(
                             label="✅ Enrichment complete!",
                             state="complete", expanded=False,
@@ -1449,6 +1493,127 @@ else:
         with col_title:
             st.markdown("#### Find Companies")
 
+
+    # -----------------------------------------------------------------------
+    # COMPANY ENRICHMENT TAB
+    # -----------------------------------------------------------------------
+    with tab_enrichment:
+        from utils.auth import require_user
+        from core.enrichment_runner import run_company_enrichment
+        import json as _json
+
+        st.subheader("🏢 Company Enrichment")
+        st.caption(
+            "Look up decision makers, intent signals, and recent OTT buying "
+            "signals for any company. Results are cached for 90 days."
+        )
+
+        enrich_company = st.text_input(
+            "Company name",
+            placeholder="e.g. Nexstar Media Group",
+            key="enrichment_company_input",
+        )
+
+        enrich_run_btn = st.button(
+            "🔍 Enrich Company",
+            type="primary",
+            use_container_width=True,
+            key="enrich_company_btn",
+            disabled=not enrich_company.strip(),
+        )
+
+        if enrich_run_btn:
+            director = get_current_user()
+            if not director:
+                st.warning("⚠️ Please select your name in the sidebar first.")
+            else:
+                with st.status(
+                    f"Enriching {enrich_company}…", expanded=True
+                ) as status:
+                    st.write("Checking cache → Apollo → Grok signal sweep…")
+                    try:
+                        from core.sheets import SheetsClient
+                        _sc = SheetsClient()
+                        result = run_company_enrichment(
+                            company=enrich_company.strip(),
+                            bu=bu,
+                            director=director,
+                            sheets=_sc,
+                        )
+                        st.session_state["enrichment_result"] = result
+                        if result.get("from_cache"):
+                            status.update(
+                                label=f"✅ Loaded from cache ({result.get('cached_date', '')})",
+                                state="complete", expanded=False,
+                            )
+                        else:
+                            status.update(
+                                label="✅ Enrichment complete",
+                                state="complete", expanded=False,
+                            )
+                    except Exception as exc:
+                        status.update(label="❌ Error", state="error", expanded=True)
+                        st.error(f"**Error:** {exc}")
+                        st.exception(exc)
+
+        # ---- Display enrichment results ----
+        enrich_result = st.session_state.get("enrichment_result")
+        if enrich_result and not enrich_result.get("error"):
+            st.divider()
+
+            company_name = enrich_result.get("company", "")
+            domain       = enrich_result.get("domain", "")
+            from_cache   = enrich_result.get("from_cache", False)
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"### {company_name}")
+                if domain:
+                    st.caption(f"[{domain}](https://{domain})")
+            with col2:
+                if from_cache:
+                    st.info(f"📦 Cached  \n{enrich_result.get('cached_date', '')[:10]}")
+                else:
+                    st.success("🆕 Fresh run")
+
+            # Grok signal
+            grok_sig = enrich_result.get("grok_signal", "")
+            if grok_sig:
+                st.markdown("**📡 Recent OTT Signal**")
+                st.info(grok_sig)
+
+            # Intent topics
+            intent = enrich_result.get("intent_topics", [])
+            if intent:
+                st.markdown("**🎯 Intent Topics**")
+                st.write("  ".join(f"`{t}`" for t in intent))
+
+            # Decision makers
+            dms = enrich_result.get("decision_makers", [])
+            if dms:
+                st.markdown(f"**👥 Decision Makers** ({len(dms)} found)")
+                for dm in dms:
+                    name    = dm.get("name", "")
+                    title   = dm.get("title", "")
+                    li      = dm.get("linkedin", "")
+                    email   = dm.get("email", "")
+                    loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
+
+                    dm_col1, dm_col2, dm_col3 = st.columns([3, 2, 2])
+                    with dm_col1:
+                        name_md = f"[{name}]({li})" if li else name
+                        st.markdown(f"**{name_md}**  \n{title}")
+                    with dm_col2:
+                        if email:
+                            st.caption(f"✉️ {email}")
+                        if loc:
+                            st.caption(f"📍 {loc}")
+                    with dm_col3:
+                        if li:
+                            st.markdown(f"[LinkedIn →]({li})")
+                    st.divider()
+            else:
+                st.caption("No decision makers found via Apollo.")
 
     # -----------------------------------------------------------------------
     # ACCOUNT INTELLIGENCE TAB

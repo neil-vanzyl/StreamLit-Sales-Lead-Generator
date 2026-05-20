@@ -26,20 +26,23 @@ SCOPES = [
 ]
 
 LOG_COLUMNS = [
-    "Timestamp",
-    "Run ID",
-    "Query",
-    "Company",
-    "Domain",
-    "Step",
-    "Status",
-    "Detail",
-    "Tokens In",
-    "Tokens Out",
-    "Credits",
-    "Cost USD",
-    "Error",
-    "Duration ms",
+    "Timestamp", "Run ID", "Query", "Company", "Domain",
+    "Step", "Status", "Detail", "Tokens In", "Tokens Out",
+    "Credits", "Cost USD", "Error", "Duration ms",
+]
+
+USAGE_TRACKER_COLUMNS = [
+    "Timestamp", "Run ID", "Sales Director", "Track",
+    "Query / Company", "Companies Researched",
+    "Grok Cost USD", "Sonnet Cost USD", "Opus Cost USD",
+    "Gemini Cost USD", "Exa Cost USD", "Apollo Cost USD",
+    "Total Cost USD", "Month", "BU",
+]
+
+ENRICHMENT_COLUMNS = [
+    "Timestamp", "Run ID", "Sales Director", "Company", "Domain",
+    "HQ Country", "Decision Makers", "C-Suite Changes",
+    "Intent Topics", "Grok Signal Summary", "BU", "Status",
 ]
 
 
@@ -56,6 +59,8 @@ class SheetsClient:
         self._ws_logs: Optional[gspread.Worksheet] = None
         self._ws_accounts: Optional[gspread.Worksheet] = None
         self._ws_signals: Optional[gspread.Worksheet] = None
+        self._ws_usage: Optional[gspread.Worksheet] = None
+        self._ws_enrichment: Optional[gspread.Worksheet] = None
         self._seen_domains: Set[str] = set()
         self._seen_pairs: Set[tuple] = set()
 
@@ -94,11 +99,13 @@ class SheetsClient:
             logger.info(f"Sheets: creating new spreadsheet '{config.GOOGLE_SHEET_NAME}'")
             self._ss = gc.create(config.GOOGLE_SHEET_NAME)
 
-        self._ws_hot      = self._get_or_create_ws(config.GOOGLE_WORKSHEET_NAME)
-        self._ws_cold     = self._get_or_create_ws(config.GOOGLE_COLD_WORKSHEET_NAME)
-        self._ws_logs     = self._get_or_create_ws(config.GOOGLE_LOGS_WORKSHEET_NAME, LOG_COLUMNS)
-        self._ws_accounts = self._get_or_create_ws(config.GOOGLE_ACCOUNTS_WORKSHEET_NAME, config.ACCOUNTS_COLUMNS)
-        self._ws_signals  = self._get_or_create_ws(config.GOOGLE_SIGNALS_WORKSHEET_NAME, config.SIGNALS_COLUMNS)
+        self._ws_hot        = self._get_or_create_ws(config.GOOGLE_WORKSHEET_NAME)
+        self._ws_cold       = self._get_or_create_ws(config.GOOGLE_COLD_WORKSHEET_NAME)
+        self._ws_logs       = self._get_or_create_ws(config.GOOGLE_LOGS_WORKSHEET_NAME, LOG_COLUMNS)
+        self._ws_accounts   = self._get_or_create_ws(config.GOOGLE_ACCOUNTS_WORKSHEET_NAME, config.ACCOUNTS_COLUMNS)
+        self._ws_signals    = self._get_or_create_ws(config.GOOGLE_SIGNALS_WORKSHEET_NAME, config.SIGNALS_COLUMNS)
+        self._ws_usage      = self._get_or_create_ws(config.GOOGLE_USAGE_TRACKER_WORKSHEET_NAME, USAGE_TRACKER_COLUMNS)
+        self._ws_enrichment = self._get_or_create_ws(config.GOOGLE_ENRICHMENT_WORKSHEET_NAME, ENRICHMENT_COLUMNS)
 
         self._load_dedup_cache()
 
@@ -173,9 +180,9 @@ class SheetsClient:
 
         self._connect()
 
-        if self.is_duplicate(domain, contact_name):
-            logger.info(f"Sheets: SKIP duplicate — {company} / {contact_name or 'no contact'}")
-            return False
+        is_rerun = self.is_duplicate(domain, contact_name)
+        if is_rerun:
+            logger.info(f"Sheets: RE-RUN detected — {company} / {contact_name or 'no contact'} — writing with Re-run status")
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -230,7 +237,7 @@ class SheetsClient:
             vis_exa_quote, vis_exa_pain, ops_exa_quote, ops_exa_pain,
             apollo_name, apollo_title, apollo_email, apollo_linkedin,
             outreach.get("salesforce_note", ""), str(prospect.get("research_gaps", "")),
-            query, "New", exa_rejected, gemini_reasoning, bu,
+            query, "Re-run" if is_rerun else "New", exa_rejected, gemini_reasoning, bu,
         ]
 
         target_ws = self._ws_cold if is_cold else self._ws_hot
@@ -242,7 +249,11 @@ class SheetsClient:
 
         target_ws.append_row(row, value_input_option="RAW")
         self._mark_seen(domain, contact_name)
-        logger.info(f"Sheets: WRITTEN TO {'COLD' if is_cold else 'HOT'} — {company} | score={score} | bu={bu}")
+        logger.info(
+            f"Sheets: WRITTEN TO {'COLD' if is_cold else 'HOT'} — "
+            f"{company} | score={score} | bu={bu}"
+            f"{' | RE-RUN' if is_rerun else ''}"
+        )
         return True
 
     # ------------------------------------------------------------------
@@ -536,10 +547,136 @@ class SheetsClient:
             logger.warning(f"Sheets: could not load semantic guide: {exc}")
             return ""
 
+    # ------------------------------------------------------------------
+    # Usage Tracker
+    # ------------------------------------------------------------------
 
-# ------------------------------------------------------------------
-# Module-level helpers
-# ------------------------------------------------------------------
+    def write_usage(
+        self,
+        run_id: str,
+        director: str,
+        track: str,
+        query: str,
+        companies_researched: int,
+        usage_summary: dict,
+        bu: str = "",
+    ) -> None:
+        """Write one row to the Usage Tracker tab after a pipeline run completes."""
+        self._connect()
+        ts    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+
+        grok_cost   = usage_summary.get("grok", {}).get("cost_usd", 0)
+        sonnet_cost = usage_summary.get("sonnet", {}).get("cost_usd", 0)
+        opus_cost   = usage_summary.get("opus", {}).get("cost_usd", 0)
+        gemini_cost = usage_summary.get("gemini", {}).get("cost_usd", 0)
+        exa_cost    = usage_summary.get("exa", {}).get("cost_usd", 0)
+        apollo_cost = usage_summary.get("apollo", {}).get("cost_usd", 0)
+        total_cost  = usage_summary.get("total_cost_usd", 0)
+
+        row = [
+            ts, run_id, director, track,
+            query[:120], companies_researched,
+            round(grok_cost, 4), round(sonnet_cost, 4),
+            round(opus_cost, 4), round(gemini_cost, 4),
+            round(exa_cost, 4), round(apollo_cost, 4),
+            round(total_cost, 4), month, bu,
+        ]
+        try:
+            self._ws_usage.append_row(row, value_input_option="RAW")
+            logger.info(
+                f"Sheets: Usage logged — {director} | {track} | "
+                f"${total_cost:.4f} | {companies_researched} companies"
+            )
+        except Exception as exc:
+            logger.error(f"Sheets: Usage write failed: {exc}")
+
+    def get_director_month_spend(self, director: str) -> list:
+        """
+        Return list of Total Cost USD values for this director in the current month.
+        Used by auth.py to calculate budget remaining.
+        """
+        self._connect()
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        try:
+            rows = self._ws_usage.get_all_records()
+            return [
+                float(r.get("Total Cost USD", 0) or 0)
+                for r in rows
+                if r.get("Sales Director") == director
+                and str(r.get("Month", "")).startswith(month)
+            ]
+        except Exception as exc:
+            logger.warning(f"Sheets: could not read usage for {director}: {exc}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Company Enrichment
+    # ------------------------------------------------------------------
+
+    def write_enrichment(
+        self,
+        run_id: str,
+        director: str,
+        company: str,
+        domain: str,
+        hq_country: str,
+        decision_makers: list,
+        c_suite_changes: str,
+        intent_topics: list,
+        grok_signal_summary: str,
+        bu: str = "",
+    ) -> None:
+        """Write one row to the Company Enrichment tab."""
+        self._connect()
+        import json as _json
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        row = [
+            ts, run_id, director, company, domain, hq_country,
+            _json.dumps(decision_makers, ensure_ascii=False)[:2000],
+            c_suite_changes[:500],
+            ", ".join(intent_topics)[:300],
+            grok_signal_summary[:800],
+            bu, "Fresh",
+        ]
+        try:
+            self._ws_enrichment.append_row(row, value_input_option="RAW")
+            logger.info(f"Sheets: Enrichment written — {company} | {director}")
+        except Exception as exc:
+            logger.error(f"Sheets: Enrichment write failed: {exc}")
+
+    def get_enrichment_cache(self, domain: str, max_age_days: int = 90) -> Optional[dict]:
+        """
+        Return the most recent enrichment row for this domain if within max_age_days.
+        Returns None if not found or too old.
+        """
+        self._connect()
+        try:
+            rows = self._ws_enrichment.get_all_records()
+            from datetime import timedelta
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+            matches = [
+                r for r in rows
+                if r.get("Domain", "").lower() == domain.lower()
+            ]
+            if not matches:
+                return None
+            # Most recent first
+            matches.sort(key=lambda r: r.get("Timestamp", ""), reverse=True)
+            latest = matches[0]
+            ts_str = latest.get("Timestamp", "")
+            try:
+                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M UTC").replace(
+                    tzinfo=timezone.utc
+                )
+                if ts < cutoff:
+                    return None
+            except Exception:
+                return None
+            return latest
+        except Exception as exc:
+            logger.warning(f"Sheets: enrichment cache lookup failed: {exc}")
+            return None
 
 def _strip_citation(value: str) -> str:
     import re
