@@ -36,14 +36,14 @@ GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
 Return ONLY a JSON object, no preamble, no markdown:
-{{
+{
   "vertical_description": "Expanded description of the target company types with industry terminology",
   "signal_groups": [
-    {{"label": "Group name", "description": "What to look for and why it signals Accedo opportunity"}},
-    {{"label": "Group name", "description": "..."}}
+    {"label": "Group name", "description": "What to look for and why it signals Accedo opportunity"},
+    {"label": "Group name", "description": "..."}
   ],
   "aggregation_hint": "Single sentence: best industry list/conference/award to search for these verticals"
-}}
+}
 """
 
 # ---------------------------------------------------------------------------

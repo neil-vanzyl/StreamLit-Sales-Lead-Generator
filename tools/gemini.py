@@ -80,15 +80,15 @@ def enrich_brief(
         "APAC": "Asia Pacific (including Australia and New Zealand)",
     }.get(bu, bu)
 
-    prompt = BRIEF_ENRICHMENT_PROMPT.format(
-        verticals=", ".join(verticals),
-        signals=", ".join(signals),
-        bu_label=bu_label,
-        auto_brief=auto_brief,
+    prompt = (BRIEF_ENRICHMENT_PROMPT
+        .replace("{verticals}", ", ".join(verticals))
+        .replace("{signals}", ", ".join(signals))
+        .replace("{bu_label}", bu_label)
+        .replace("{auto_brief}", auto_brief)
     )
 
     try:
-        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=512)
+        raw, tokens_in, tokens_out = _call_gemini(prompt, max_tokens=1024)
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
