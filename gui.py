@@ -10,6 +10,7 @@ Both tracks respect the BU selector (NAM / E&L / APAC).
 
 import logging
 import random
+import os
 from datetime import datetime
 from io import StringIO
 
@@ -1066,7 +1067,8 @@ else:
                 # Enrich with Gemini — fast call, falls back silently if it fails
                 final_brief = auto_brief
                 used_gemini = False
-                if config.GEMINI_API_KEY:
+                _gemini_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+                if _gemini_key:
                     try:
                         from tools.gemini import enrich_brief
                         enrichment = enrich_brief(
