@@ -23,7 +23,7 @@ logger = logging.getLogger("ott_lead_gen.gemini")
 GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
-def _call_gemini(prompt: str, max_tokens: int = 512) -> tuple:
+def _call_gemini(prompt: str, max_tokens: int = 1024) -> tuple:
     api_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
