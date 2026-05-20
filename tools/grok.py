@@ -106,7 +106,8 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
     return result
 
 
-
+@with_retries(max_attempts=3, delay=15.0, exceptions=(Exception,))
+def run_research_waterfall(query: str, usage_tracker=None) -> dict:
     if not config.XAI_API_KEY:
         raise ValueError("XAI_API_KEY is not set.")
 
@@ -136,7 +137,6 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
         "Authorization": f"Bearer {config.XAI_API_KEY}"
     }
 
-    # 2026 Agentic Payload
     payload = {
         "model": config.GROK_SCOUT_MODEL,
         "input": [
@@ -144,25 +144,21 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
             {"role": "user", "content": user_prompt}
         ],
         "tools": [
-            {"type": "web_search"}, 
+            {"type": "web_search"},
             {"type": "x_search"}
         ],
-        "response_format": {"type": "json_object"},
         "temperature": 0.1,
         "store_messages": True
     }
 
-    # High timeout (180s) is required for grok-4-1 reasoning + search steps
     response = requests.post(url, headers=headers, json=payload, timeout=180)
-    
+
     if response.status_code != 200:
         logger.error(f"Grok API Error {response.status_code}: {response.text}")
         response.raise_for_status()
 
     data = response.json()
-    
-    # 2026 Deep-Nesting Extractor
-    # Path: data['output'] -> item['type']=='message' -> item['content'] -> part['type']=='output_text'
+
     raw = ""
     for item in data.get("output", []):
         if item.get("type") == "message" and "content" in item:
@@ -170,14 +166,13 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
                 if part.get("type") == "output_text":
                     raw = part.get("text", "")
                     break
-        elif item.get("type") == "text": # Fallback for non-agentic modes
+        elif item.get("type") == "text":
             raw = item.get("text", "")
-        
-        if raw: break # Stop once content is found
+        if raw:
+            break
 
     logger.info(f"Grok: Agentic response received — {len(raw)} chars")
 
-    # Record token usage if a RunUsage tracker was passed
     if usage_tracker is not None:
         usage_data = data.get("usage", {})
         usage_tracker.record_grok(
