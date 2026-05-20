@@ -41,8 +41,22 @@ QUALITY RULES:
 - Evidence must be a specific signal with a source — not a generic description
 - Tier 1 and Tier 2 organisations only (roughly 50+ employees)
 - No duplicate parent/subsidiary pairs
-- If you cannot find enough companies with real signals, return fewer — never fabricate
+- AIM FOR 10 COMPANIES — return all candidates, let the rep decide
+- If you find fewer than 10, return what you have — never fabricate
 - Prefer signals from the last 12 months
+
+SIGNAL QUALITY GUIDANCE:
+PREFER signals that indicate frustration or transition readiness:
+- Companies that launched on a white-label vendor 2+ years ago (now hitting limits)
+- App store complaints about buffering, DRM, login issues on existing platforms  
+- Job postings for in-house OTT engineers (signals they want to reduce vendor dependency)
+- Leadership changes in streaming/digital (new exec = platform review)
+- Rights expansions that exceed what their current vendor can handle
+
+DEPRIORITISE signals that indicate a company just committed to a vendor:
+- Press releases announcing a new ViewLift/24i/3SS partnership in the last 6 months
+- "Powered by [vendor]" launches in 2025-2026 — these are locked in, not churning
+- Companies that just raised seed/Series A — too early, no budget for bespoke
 
 OUTPUT FORMAT — return ONLY this exact JSON structure, zero preamble, zero markdown:
 {{
@@ -89,6 +103,10 @@ def build_discovery_user_prompt(brief: str, bu: str = "", max_companies: int = 1
         f"but haven't launched a major platform recently\n"
         f"Return up to {max_companies} companies. Only include companies where you "
         f"found a real, specific, recent signal — not generic descriptions. "
-        f"Return all companies where you found any relevant signal — even if the evidence is indirect or circumstantial. Include companies that are likely matches based on context, not just confirmed matches. Aim for {max_companies} results. A lower-confidence result the rep can discard is more useful than an empty list.\n\n"
+        f"Return all companies where you found any relevant signal — even if the evidence is\n"
+        f"indirect or circumstantial. Include companies that are likely matches based on\n" 
+        f"context, not just confirmed matches. Aim for {max_companies} results. \n"
+        f"A lower-confidence result the rep can discard is more useful than an empty list.\n"
+        f"On each run attempt to identify 10 results.\n\n"
         f"Return only the JSON object."
     )

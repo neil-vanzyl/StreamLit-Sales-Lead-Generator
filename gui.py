@@ -963,8 +963,7 @@ else:
                         st.session_state[f"s_{_s}"] = _s in cfg["signals"]
 
                 # Clear downstream state only
-                for key in ["assembled_brief", "sweep_result",
-                            "grok_prospects", "enrichment_selections"]:
+                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
 
                 st.rerun()
@@ -1029,76 +1028,23 @@ else:
             if context_val.strip():
                 auto_brief += f"\n\nAdditional context: {context_val.strip()}"
 
-            # Use Gemini-enhanced brief if available, otherwise auto-built
-            if "assembled_brief" in st.session_state:
-                brief_default = st.session_state["assembled_brief"].get("brief", auto_brief)
-            else:
-                brief_default = auto_brief
-                # Keep widget in sync with current selections unless user has
-                # manually edited it (detect by comparing to last auto-built value)
-                last_auto = st.session_state.get("last_auto_brief", "")
-                current_widget = st.session_state.get("brief_text_area", "")
-                if current_widget == last_auto or current_widget == "":
-                    st.session_state["brief_text_area"] = auto_brief
-                st.session_state["last_auto_brief"] = auto_brief
+            # Keep widget in sync with selections unless user has manually edited
+            current_widget = st.session_state.get("brief_text_area", "")
+            last_auto      = st.session_state.get("last_auto_brief", "")
+            if current_widget == last_auto or current_widget == "":
+                st.session_state["brief_text_area"] = auto_brief
+            st.session_state["last_auto_brief"] = auto_brief
 
-            # Optional Gemini enhancement
-            col_brief, col_enhance = st.columns([5, 1])
-            with col_brief:
-                st.caption("**Research Brief** — edit before searching if needed")
-            with col_enhance:
-                enhance_btn = st.button(
-                    "✨ Enhance",
-                    key="enhance_btn",
-                    use_container_width=True,
-                    help="Use Gemini to add industry context and search angles",
-                )
+            st.caption("**Research Brief** — edit before searching if needed")
 
             edited_brief = st.text_area(
                 "",
-                value=brief_default,
+                value=st.session_state.get("brief_text_area", auto_brief),
                 height=160,
                 key="brief_text_area",
                 label_visibility="collapsed",
             )
 
-            # Gemini enhancement — optional, shows error if it fails
-            if enhance_btn:
-                _apply_model_overrides()
-                with st.status("✨ Enhancing brief with Gemini…", expanded=True) as status:
-                    try:
-                        from tools.gemini import assemble_brief
-                        result = assemble_brief(
-                            verticals=selected_verticals,
-                            signals=selected_signals,
-                            context=context_val,
-                            bu=bu,
-                        )
-                        # Only use Gemini result if it produced a substantively
-                        # longer brief than the fallback
-                        gemini_brief = result.get("brief", "").strip()
-                        if len(gemini_brief) > len(auto_brief) + 50:
-                            st.session_state["assembled_brief"] = result
-                            status.update(
-                                label=f"✅ Enhanced — {result.get('query_summary', '')}",
-                                state="complete", expanded=False,
-                            )
-                            st.rerun()
-                        else:
-                            st.session_state.pop("assembled_brief", None)
-                            status.update(
-                                label="⚠️ Gemini returned a thin brief — using auto-built version",
-                                state="complete", expanded=False,
-                            )
-                    except Exception as exc:
-                        status.update(
-                            label=f"❌ Gemini enhancement failed — using auto-built brief",
-                            state="error", expanded=True,
-                        )
-                        st.error(
-                            f"Gemini error: {exc}\n\n"
-                            f"The auto-built brief below will be used instead."
-                        )
 
             sweep_btn = st.button(
                 "🔍 Find Companies",
