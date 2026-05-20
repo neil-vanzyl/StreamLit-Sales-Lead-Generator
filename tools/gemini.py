@@ -53,13 +53,43 @@ def _extract_json(raw: str):
     if not raw:
         raise ValueError("Empty response")
     text = raw.strip()
+
+    # Strip markdown fences
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
+
+    # Extract outermost { ... }
     brace = re.search(r"\{.*\}", text, re.DOTALL)
     if brace:
         text = brace.group(0)
-    return json.loads(text)
+
+    # Attempt 1: direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 2: fix common Gemini issues — smart quotes and unescaped apostrophes
+    cleaned = (text
+        .replace("\u2019", "'")   # right single quote
+        .replace("\u2018", "'")   # left single quote
+        .replace("\u201c", '"')   # left double quote
+        .replace("\u201d", '"')   # right double quote
+        .replace("\u2013", "-")   # en dash
+        .replace("\u2014", "-")   # em dash
+    )
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 3: strip trailing commas before } or ]
+    no_trailing = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    try:
+        return json.loads(no_trailing)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON extraction failed after all attempts: {exc}")
 
 
 def enrich_brief(

@@ -926,7 +926,7 @@ else:
                 "Smart TV app launch",
                 "Mobile-only",
                 "Youtube transition to OTT",
-                "Web apps looking for native"
+                "Web apps looking for native",
                 "Platform migration",
                 "Stranded vendor customer",
                 "Video player overhaul",
