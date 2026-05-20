@@ -77,36 +77,32 @@ def enrich_brief(
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
-        # Parse plain text response — no JSON, no fragile parsing
-        vertical_desc = ""
-        signal_lines  = ""
-        agg_hint      = ""
+        # Parse plain text response using section-based approach
+        # Handles both same-line and next-line content after each label
+        sections = {"VERTICAL": "", "SIGNALS": "", "AGGREGATION": ""}
+        current_key = None
 
         for line in raw.splitlines():
-            line = line.strip()
-            if line.startswith("VERTICAL:"):
-                vertical_desc = line[len("VERTICAL:"):].strip()
-            elif line.startswith("SIGNALS:"):
-                signal_lines = line[len("SIGNALS:"):].strip()
-            elif line.startswith("AGGREGATION:"):
-                agg_hint = line[len("AGGREGATION:"):].strip()
-
-        # Also handle multi-line SIGNALS block
-        if not signal_lines:
-            in_signals = False
-            sig_parts  = []
-            for line in raw.splitlines():
-                line = line.strip()
-                if line.startswith("SIGNALS:"):
-                    in_signals = True
-                    rest = line[len("SIGNALS:"):].strip()
+            stripped = line.strip()
+            matched = False
+            for key in sections:
+                if stripped.upper().startswith(f"{key}:"):
+                    current_key = key
+                    rest = stripped[len(key)+1:].strip()
                     if rest:
-                        sig_parts.append(rest)
-                elif in_signals and line.startswith("AGGREGATION:"):
+                        sections[key] = rest
+                    matched = True
                     break
-                elif in_signals and line:
-                    sig_parts.append(line)
-            signal_lines = " | ".join(sig_parts)
+            if not matched and current_key and stripped:
+                # Continuation line — append to current section
+                if sections[current_key]:
+                    sections[current_key] += " " + stripped
+                else:
+                    sections[current_key] = stripped
+
+        vertical_desc = sections["VERTICAL"]
+        signal_lines  = sections["SIGNALS"]
+        agg_hint      = sections["AGGREGATION"]
 
         if not vertical_desc:
             raise ValueError("Could not parse VERTICAL from Gemini response")
