@@ -1005,7 +1005,7 @@ else:
                 }.get(bu, bu)
 
                 auto_brief = (
-                    f"Find Tier 1 and Tier 2 {', '.join(selected_verticals)} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(selected_verticals)} companies "
                     f"headquartered in {bu_label} "
                     f"showing these OTT buying signals: {', '.join(selected_signals)}."
                 )
