@@ -538,76 +538,159 @@ def run_pipeline(query: str, dry_run: bool = False, bu: str = "") -> List[dict]:
 # Stage 1 — Fast discovery sweep (names + evidence only, no deep research)
 # ---------------------------------------------------------------------------
 
+def _run_single_vertical_sweep(
+    vertical: str,
+    bu: str,
+    signals: list,
+    brief_template: str,
+    run_id: str,
+    usage: "RunUsage",
+    sheets: SheetsClient,
+) -> list:
+    """
+    Run one discovery sweep for a single vertical.
+    Returns list of company dicts.
+    """
+    from tools.grok import run_discovery_waterfall
+    from tools.gemini import enrich_brief
+
+    # Build vertical-specific brief
+    bu_label = {
+        "NAM":  "North America (US, Canada, Mexico)",
+        "E&L":  "Europe or Latin America",
+        "APAC": "Asia Pacific (including Australia and New Zealand)",
+    }.get(bu, bu)
+
+    auto_brief = (
+        f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical} companies "
+        f"headquartered in {bu_label} "
+        f"showing these OTT buying signals: {', '.join(signals)}."
+    )
+
+    # Enrich with Gemini for vertical-specific terminology
+    try:
+        if hasattr(__import__('config'), 'GEMINI_API_KEY') and \
+                __import__('config').GEMINI_API_KEY:
+            enriched = enrich_brief(
+                auto_brief=auto_brief,
+                verticals=[vertical],
+                signals=signals,
+                bu=bu,
+            )
+            brief = enriched.get("enriched_brief", auto_brief)
+        else:
+            brief = auto_brief
+    except Exception:
+        brief = auto_brief
+
+    logger.info(f"  Vertical sweep: {vertical} | brief={brief[:80]}...")
+
+    try:
+        usage.start_prospect(f"_sweep_{vertical}")
+        t0     = time.monotonic()
+        result = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
+        usage.end_prospect()
+
+        companies   = result.get("companies", [])
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        sheets.write_log(
+            run_id=run_id, query=brief[:120], company="—", domain="—",
+            step=f"Discovery Sweep ({vertical})", status="OK",
+            detail=f"{len(companies)} companies found | bu={bu}",
+            duration_ms=duration_ms,
+        )
+        logger.info(f"  {vertical}: {len(companies)} companies found in {duration_ms}ms")
+        return companies
+
+    except Exception as exc:
+        usage.end_prospect()
+        logger.error(f"  {vertical} sweep failed: {exc}")
+        sheets.write_log(
+            run_id=run_id, query=brief[:120], company="—", domain="—",
+            step=f"Discovery Sweep ({vertical})", status="FAILED",
+            error=str(exc),
+        )
+        return []
+
+
 def run_discovery_sweep(
     brief: str,
     bu: str = "",
     signals: list = None,
+    verticals: list = None,
     run_id: str = "",
     usage: "RunUsage" = None,
     sheets: SheetsClient = None,
+    on_vertical_start: callable = None,
+    on_vertical_done: callable = None,
 ) -> dict:
     """
-    Lightweight Grok pass using the discovery system prompt (not scout.py).
-    Dynamically injects targeted search instructions based on selected signals.
-    Scans aggregation sources (conference lists, award shortlists, market maps)
-    for company names with one-line evidence. Fast (~60-90s), cheap.
+    Run one discovery sweep per vertical, then merge and deduplicate results.
+    Each vertical gets its own Gemini-enriched brief and targeted search.
+    Callbacks allow the GUI to show per-vertical progress.
 
     Args:
-        signals: List of signal strings selected in the intake form —
-                 used to inject targeted search instructions into the prompt
+        verticals: List of vertical names — one sweep per vertical.
+                   Falls back to single sweep using brief if not provided.
+        on_vertical_start(vertical, idx, total): called before each sweep
+        on_vertical_done(vertical, companies, idx, total): called after each sweep
     """
-    from tools.grok import run_discovery_waterfall
-
-    run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    usage  = usage  or RunUsage(brief[:80])
-    sheets = sheets or SheetsClient()
+    run_id  = run_id  or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    usage   = usage   or RunUsage(brief[:80])
+    sheets  = sheets  or SheetsClient()
+    signals = signals or []
 
     logger.info(f"\n{'='*65}")
-    logger.info(f"Discovery Sweep: BU={bu} | signals={signals} | brief={brief[:60]}...")
+    logger.info(f"Discovery: {len(verticals or [])} vertical(s) | BU={bu}")
     logger.info(f"{'='*65}")
 
-    usage.start_prospect("_discovery_sweep")
-    t0 = time.monotonic()
-    companies      = []
-    search_summary = ""
+    all_companies   = []
+    search_summaries = []
+    seen_names      = set()
 
-    try:
-        result         = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
-        companies      = result.get("companies", [])
-        search_summary = result.get("search_summary", "")
-        duration_ms    = int((time.monotonic() - t0) * 1000)
+    sweep_verticals = verticals if verticals else ["General"]
 
-        cur = usage._prospects[-1] if usage._prospects else None
-        sheets.write_log(
-            run_id=run_id, query=brief[:120], company="—", domain="—",
-            step="Discovery Sweep", status="OK",
-            detail=f"{len(companies)} companies found | bu={bu}",
-            tokens_in=cur.grok_input_tokens if cur else 0,
-            tokens_out=cur.grok_output_tokens if cur else 0,
-            duration_ms=duration_ms,
+    for idx, vertical in enumerate(sweep_verticals, 1):
+        if on_vertical_start:
+            on_vertical_start(vertical, idx, len(sweep_verticals))
+
+        companies = _run_single_vertical_sweep(
+            vertical=vertical,
+            bu=bu,
+            signals=signals,
+            brief_template=brief,
+            run_id=run_id,
+            usage=usage,
+            sheets=sheets,
         )
-        logger.info(f"Discovery Sweep complete: {len(companies)} companies in {duration_ms}ms")
 
-    except Exception as exc:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        sheets.write_log(
-            run_id=run_id, query=brief[:120], company="—", domain="—",
-            step="Discovery Sweep", status="FAILED",
-            error=str(exc), duration_ms=duration_ms,
-        )
-        logger.error(f"Discovery Sweep failed: {exc}")
+        # Deduplicate by normalised company name, keep first occurrence
+        new_companies = []
+        for c in companies:
+            key = c.get("name", "").lower().strip()
+            if key and key not in seen_names:
+                seen_names.add(key)
+                c["vertical"] = vertical  # tag which sweep found it
+                new_companies.append(c)
 
-    usage.end_prospect()
+        all_companies.extend(new_companies)
+
+        if on_vertical_done:
+            on_vertical_done(vertical, new_companies, idx, len(sweep_verticals))
+
+    logger.info(f"Discovery complete: {len(all_companies)} unique companies across {len(sweep_verticals)} vertical(s)")
 
     return {
         "run_id":         run_id,
-        "companies":      companies,
-        "search_summary": search_summary,
+        "companies":      all_companies,
+        "search_summary": f"{len(all_companies)} companies across {len(sweep_verticals)} vertical sweep(s)",
         "bu":             bu,
         "brief":          brief,
         "usage":          usage,
         "sheets":         sheets,
     }
+
 
 
 # ---------------------------------------------------------------------------
