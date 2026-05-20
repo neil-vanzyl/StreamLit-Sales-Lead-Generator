@@ -37,13 +37,13 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Return your response on a SINGLE LINE in this exact format:
+Return your response on a SINGLE LINE in this exact format, with || separating each section:
 VERTICAL: [description] || SIGNALS: [groups] || AGGREGATION: [hint]
 
-Example of correct output:
-VERTICAL: Regional sports networks (RSNs), professional sports leagues, sports streaming services, collegiate athletic conferences
-SIGNALS: Platform Modernization: Companies replacing white-label vendor infrastructure or rebuilding CTV apps from scratch | Talent Investment: Active hiring of OTT engineers or product managers signalling platform build intent
-AGGREGATION: Search Sports Video Group (SVG) member directory and SportsPro OTT Awards shortlists for qualifying companies.
+Here is an example of a correct single-line response:
+VERTICAL: Regional sports networks (RSNs), professional sports leagues, sports streaming services || SIGNALS: Platform Modernization: Companies replacing white-label vendor infrastructure | Talent Investment: Active hiring of OTT engineers || AGGREGATION: Search Sports Video Group (SVG) member directory and SportsPro OTT Awards shortlists.
+
+Your response must be a single line like the example above. Do not use newlines.
 """
 
 # ---------------------------------------------------------------------------
