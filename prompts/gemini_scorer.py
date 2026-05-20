@@ -22,6 +22,8 @@ auto-built brief with three specific improvements — nothing more:
    - "In-Vehicle" → "Automotive entertainment providers, in-vehicle infotainment companies"
    - "Pay TV" → "Cable operators, telco TV providers, pay TV platform operators"
    - "Multi-Vertical" → "Multi-genre streaming services, media conglomerates with multiple content verticals"
+   - "Micro-drama" → "Short-form episodic video platforms, vertical video drama series, mobile-first narrative content apps (e.g., ReelShort, DramaBox)"
+   - "FAST" → "Free ad-supported streaming TV channels, FAST channel operators, linear streaming platforms, AVOD networks"
 
 2. SIGNAL GROUPING: Group the selected signals into 2-3 thematic buckets with a one-line
    description per bucket. Use the format from the example below. Do NOT list every signal

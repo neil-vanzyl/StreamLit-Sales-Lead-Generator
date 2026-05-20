@@ -1124,19 +1124,41 @@ else:
                             "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
 
-                st.info("🔍 Grok is scanning the web — this takes 60-90 seconds…")
+                st.info("🔍 Grok is scanning the web — this takes 60-90 seconds per vertical…")
                 with st.status(
                     "🔍 Searching for companies…", expanded=True
                 ) as status:
-                    st.write(
-                        "Searching trade press, conference exhibitor lists, award "
-                        "shortlists, and market maps for companies matching your brief…"
-                    )
+                    selected_verticals_for_sweep = st.session_state.get("form_verticals", [])
+                    total_verticals = len(selected_verticals_for_sweep) or 1
+
+                    if total_verticals > 1:
+                        st.write(f"Running {total_verticals} vertical sweeps in sequence…")
+
+                    v_placeholders = {}
+                    for v in selected_verticals_for_sweep:
+                        v_placeholders[v] = st.empty()
+                        v_placeholders[v].markdown(f"⬜ **{v}** · queued")
+
+                    def _on_v_start(vertical, idx, total):
+                        if vertical in v_placeholders:
+                            v_placeholders[vertical].markdown(
+                                f"⏳ **{vertical}** · searching… *({idx}/{total})*"
+                            )
+
+                    def _on_v_done(vertical, companies, idx, total):
+                        if vertical in v_placeholders:
+                            v_placeholders[vertical].markdown(
+                                f"✅ **{vertical}** · {len(companies)} companies found"
+                            )
+
                     try:
                         sweep = main.run_discovery_sweep(
                             edited_brief,
                             bu=bu,
                             signals=st.session_state.get("form_signals", []),
+                            verticals=selected_verticals_for_sweep,
+                            on_vertical_start=_on_v_start,
+                            on_vertical_done=_on_v_done,
                         )
                         st.session_state["sweep_result"]  = sweep
                         st.session_state["sweep_brief"]   = edited_brief

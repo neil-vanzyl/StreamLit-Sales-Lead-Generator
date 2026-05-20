@@ -20,6 +20,26 @@ SIGNAL_SEARCH_INSTRUCTIONS = {
 
     # ── Platform & Technology ──────────────────────────────────────────────
 
+    "Mobile-only": (
+        "Search for streaming services or media companies that are currently "
+        "mobile-only with no web, desktop, or CTV presence — strong candidates "
+        "for platform expansion. Search: 'streaming app mobile only no CTV 2025 2026' "
+        "and 'mobile video platform expanding beyond app store' and "
+        "'media company mobile first CTV ambition'."
+    ),
+    "Youtube transition to OTT": (
+        "Search for YouTube channels, YouTube-native creators, or YouTube-dependent "
+        "media companies building their own owned OTT platform to reduce dependency "
+        "on YouTube. Search: 'YouTube channel launches own streaming platform 2025 2026' "
+        "and 'creator economy owned streaming platform' and "
+        "'media brand leaving YouTube direct to consumer streaming'."
+    ),
+    "Web apps looking for native": (
+        "Search for streaming services currently delivered as web apps or PWAs seeking "
+        "native CTV applications. Search: 'streaming service web app native CTV launch "
+        "2025 2026' and 'PWA to native streaming app development' and "
+        "'web-based video platform native smart TV app'."
+    ),
     "First CTV build": (
         "Search for companies that have never built a streaming TV app and are "
         "about to do so for the first time. Look for mobile-first or digital-only "
@@ -322,14 +342,12 @@ def build_discovery_user_prompt(
         "APAC": "Asia Pacific (including Australia and New Zealand)",
     }.get(bu, "any region")
 
-
     injected = []
     if signals:
         for sig in signals:
             instruction = SIGNAL_SEARCH_INSTRUCTIONS.get(sig)
             if instruction and instruction not in injected:
                 injected.append(instruction)
-
 
     injected = injected[:3]
 
