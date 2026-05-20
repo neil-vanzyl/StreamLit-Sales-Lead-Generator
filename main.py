@@ -59,16 +59,50 @@ def process_prospect(
 ) -> dict:
     """
     Run the full enrichment + qualification + write pipeline for one prospect.
+    Apollo → Exa → Claude Sonnet → Claude Opus → Sheets
+    """
+    result = qualify_prospect_only(
+        prospect=prospect,
+        sheets=sheets,
+        query=query,
+        run_id=run_id,
+        dry_run=dry_run,
+        usage=usage,
+        bu=bu,
+    )
+    return draft_outreach_for_prospect(
+        result=result,
+        sheets=sheets,
+        query=query,
+        run_id=run_id,
+        dry_run=dry_run,
+        usage=usage,
+        exa_rejected=exa_rejected,
+        gemini_reasoning=gemini_reasoning,
+        bu=bu,
+    )
 
-    Execution order:
-      Apollo → Exa → Claude Sonnet → Claude Opus → Sheets
+
+def qualify_prospect_only(
+    prospect: dict,
+    sheets: SheetsClient,
+    query: str,
+    run_id: str,
+    dry_run: bool = False,
+    usage: "RunUsage" = None,
+    bu: str = "",
+) -> dict:
+    """
+    Stage 1 of 2: Apollo → Exa → Claude Sonnet qualification.
+    Returns result dict with analyst scores — no Opus, no Sheets write yet.
+    Called by GUI to show qualification results before user selects outreach.
     """
     company = prospect.get("name", "unknown")
-    domain = prospect.get("domain", "")
+    domain  = prospect.get("domain", "")
     if usage:
         usage.start_prospect(company)
 
-    logger.info(f"--- Processing Prospect: {company} ({domain}) | BU={bu} ---")
+    logger.info(f"--- Qualifying: {company} ({domain}) | BU={bu} ---")
 
     result = {
         "company":       company,
@@ -88,9 +122,7 @@ def process_prospect(
         "emails":        {},
     }
 
-    # ------------------------------------------------------------------
     # Step 1 — Apollo
-    # ------------------------------------------------------------------
     if config.APOLLO_ENABLED:
         logger.info(f"  Step 1: Apollo Validation/Discovery...")
         if not config.APOLLO_MASTER_API_KEY or not config.APOLLO_API_KEY:
@@ -99,8 +131,6 @@ def process_prospect(
                 step="Apollo", status="SKIPPED",
                 detail="One or both API keys missing",
             )
-            logger.warning(
-                "Apollo is ENABLED but one or both API keys are missing.")
         else:
             t0 = time.monotonic()
             try:
@@ -125,20 +155,17 @@ def process_prospect(
                     step="Apollo", status="FAILED",
                     error=str(exc), duration_ms=duration_ms,
                 )
-                logger.warning(
-                    f"  Apollo: enrichment failed for '{company}': {exc}")
+                logger.warning(f"  Apollo: enrichment failed for '{company}': {exc}")
 
-    # ------------------------------------------------------------------
     # Step 2 — Exa LinkedIn intelligence
-    # ------------------------------------------------------------------
     logger.info(f"  Step 2: Exa LinkedIn Intelligence...")
     t0 = time.monotonic()
     try:
         prospect = enrich_prospect_power_map(prospect, usage_tracker=usage)
         result["prospect"] = prospect
-        pm = prospect.get("power_map", {})
+        pm     = prospect.get("power_map", {})
         vis_li = pm.get("the_visionary", {}).get("linkedin_intel", {})
-        ops_li = pm.get("the_operator", {}).get("linkedin_intel", {})
+        ops_li = pm.get("the_operator",  {}).get("linkedin_intel", {})
         if vis_li.get("linkedin_posts_found") or ops_li.get("linkedin_posts_found"):
             result["exa_enriched"] = "found"
             exa_detail = "Posts found"
@@ -175,18 +202,16 @@ def process_prospect(
         )
         logger.warning(f"  Exa: enrichment failed for '{company}': {exc}")
 
-    # ------------------------------------------------------------------
     # Step 3 — Claude Sonnet qualification
-    # ------------------------------------------------------------------
     logger.info(f"  Step 3: Analyst Qualification (Sonnet)...")
     clean_prospect = json.loads(json.dumps(prospect, default=lambda o: None))
     t0 = time.monotonic()
     try:
-        analyst = qualify_prospect(clean_prospect, usage_tracker=usage)
-        duration_ms = int((time.monotonic() - t0) * 1000)
+        analyst      = qualify_prospect(clean_prospect, usage_tracker=usage)
+        duration_ms  = int((time.monotonic() - t0) * 1000)
         result["refined_score"] = analyst.get("refined_score")
-        result["verdict"] = analyst.get("verdict")
-        result["analyst"] = analyst
+        result["verdict"]       = analyst.get("verdict")
+        result["analyst"]       = analyst
         score = result["refined_score"]
         override = False
         if score is not None:
@@ -201,8 +226,8 @@ def process_prospect(
                     f"  Analyst verdict override: Claude said {result['verdict']} "
                     f"but score={score} → forcing {enforced_verdict}"
                 )
-                result["verdict"] = enforced_verdict
-                analyst["verdict"] = enforced_verdict
+                result["verdict"]    = enforced_verdict
+                analyst["verdict"]   = enforced_verdict
                 override = True
         cur = usage._current
         sheets.write_log(
@@ -221,7 +246,6 @@ def process_prospect(
             duration_ms=duration_ms,
         )
 
-        # Write signals to persistent Signals tab
         signals = prospect.get("signals", [])
         if signals and not dry_run:
             sheets.write_signals(
@@ -243,37 +267,68 @@ def process_prospect(
         )
         logger.error(f"  Analyst failed for '{company}': {exc}")
         result["error"] = f"Analyst: {exc}"
+        if usage:
+            usage.end_prospect()
         return result
 
     verdict = result["verdict"] or "COLD"
-    is_cold = verdict == "COLD"
-
-    if is_cold:
+    if verdict == "COLD":
         logger.info(
-            f"  ROUTING '{company}' -> Cold Leads tab "
+            f"  ROUTING '{company}' -> Cold Leads "
             f"(score: {result['refined_score']}, "
             f"reason: {analyst.get('skip_reason', 'score < 50')})"
         )
     else:
         logger.info(
-            f"  ROUTING '{company}' -> Leads tab "
+            f"  ROUTING '{company}' -> Leads "
             f"(score: {result['refined_score']}, verdict: {verdict})"
         )
 
-    # ------------------------------------------------------------------
+    # Do NOT call usage.end_prospect() here — draft_outreach_for_prospect closes it
+    return result
+
+
+def draft_outreach_for_prospect(
+    result: dict,
+    sheets: SheetsClient,
+    query: str,
+    run_id: str,
+    dry_run: bool = False,
+    usage: "RunUsage" = None,
+    exa_rejected: str = "",
+    gemini_reasoning: str = "",
+    bu: str = "",
+    skip_outreach: bool = False,
+) -> dict:
+    """
+    Stage 2 of 2: Claude Opus outreach drafting + Sheets write.
+    Takes the result dict from qualify_prospect_only().
+
+    Args:
+        skip_outreach: If True, write to Sheets without running Opus.
+                       Used when rep deselects a prospect at the outreach stage.
+    """
+    company  = result.get("company", "unknown")
+    domain   = result.get("domain", "")
+    prospect = result.get("prospect", {})
+    analyst  = result.get("analyst", {})
+    verdict  = result.get("verdict") or "COLD"
+    is_cold  = verdict == "COLD"
+
     # Step 4 — Claude Opus outreach
-    # ------------------------------------------------------------------
-    if is_cold:
-        logger.info(f"  Step 4: Skipping Opus for COLD lead '{company}'")
+    if is_cold or skip_outreach:
+        reason = "COLD lead" if is_cold else "Not selected for outreach by user"
+        logger.info(f"  Step 4: Skipping Opus for '{company}' — {reason}")
         sheets.write_log(
             run_id=run_id, query=query, company=company, domain=domain,
             step="Opus", status="SKIPPED",
-            detail="COLD lead — outreach not drafted",
+            detail=f"{reason} — outreach not drafted",
         )
         emails = {
             "visionary_email": {
-                "subject_line": f"{company} — archived",
-                "body": "COLD lead — no outreach drafted. Re-qualify in 90 days.",
+                "subject_line": f"{company} — {'archived' if is_cold else 'no outreach'}",
+                "body": f"{reason}. Re-qualify in 90 days." if is_cold else
+                        "Outreach not drafted — rep opted out at outreach step.",
             },
             "operator_email": {"subject_line": "", "body": ""},
         }
@@ -285,7 +340,7 @@ def process_prospect(
             if not isinstance(emails, dict) or "visionary_email" not in emails:
                 raise ValueError("Copywriter returned prose instead of JSON")
             duration_ms = int((time.monotonic() - t0) * 1000)
-            cur = usage._current
+            cur = usage._current if usage else None
             sheets.write_log(
                 run_id=run_id, query=query, company=company, domain=domain,
                 step="Opus", status="OK",
@@ -316,21 +371,15 @@ def process_prospect(
                     "body": "AI draft failed — manual write required.",
                 },
             }
+
     result["emails"] = emails
 
-    # ------------------------------------------------------------------
     # Step 5 — Extract Apollo contacts
-    # ------------------------------------------------------------------
     contacts = []
     if config.APOLLO_ENABLED:
         contacts = get_contacts_from_power_map(prospect)
-        if contacts:
-            logger.info(
-                f"  Apollo: {len(contacts)} contact(s) ready for Sheets columns")
 
-    # ------------------------------------------------------------------
     # Step 6 — Write to Sheets
-    # ------------------------------------------------------------------
     t0 = time.monotonic()
     try:
         primary_contact = contacts[0] if contacts else None

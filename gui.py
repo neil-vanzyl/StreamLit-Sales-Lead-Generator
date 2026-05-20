@@ -1359,16 +1359,17 @@ else:
                             st.exception(exc)
 
         # ----------------------------------------------------------------
-        # STAGE E — Enrichment selection (unchanged from before)
+        # ----------------------------------------------------------------
+        # STAGE E — Enrichment selection (Apollo + Exa + Sonnet)
         # ----------------------------------------------------------------
         grok_prospects = st.session_state.get("grok_prospects", [])
 
         if grok_prospects:
             st.divider()
-            st.subheader("🧠 Select which prospects to enrich")
+            st.subheader("🧠 Select which prospects to qualify")
             st.caption(
                 "HOT and WARM are pre-checked. "
-                "Unselected companies are archived to Cold Leads."
+                "Unselected companies are archived to Cold Leads without qualification."
             )
 
             if "enrichment_selections" not in st.session_state:
@@ -1405,102 +1406,224 @@ else:
                         )
 
                 enrich_submitted = st.form_submit_button(
-                    "🚀 Enrich & Draft Outreach for Selected",
+                    "🔍 Qualify Selected (Apollo + Exa + Sonnet)",
                     type="primary",
                     use_container_width=True,
                 )
 
             if enrich_submitted:
-                # Collect selections from form widget state
                 enrichment_names = {
                     p.get("name", "") for p in grok_prospects
                     if st.session_state.get(f"enrich_{p.get('name', '')}", False)
                 }
-                # Update session state
                 for p in grok_prospects:
                     n = p.get("name", "")
                     st.session_state["enrichment_selections"][n] = n in enrichment_names
 
                 enrichment_count = len(enrichment_names)
-                st.caption(
-                    f"{enrichment_count} selected for enrichment · "
-                    f"{len(grok_prospects) - enrichment_count} archived to Cold Leads"
-                )
                 if enrichment_count == 0:
                     st.warning("⬆️ Select at least one company above.")
                 else:
                     _apply_model_overrides()
-                    log_stream = st.session_state.get("log_stream")
-                    if log_stream:
-                        log_stream.truncate(0)
-                        log_stream.seek(0)
+                    _grok_usage  = st.session_state.get("grok_usage")
+                    _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
+                    query        = st.session_state.get("grok_query", "")
+                    run_id       = st.session_state.get("grok_run_id", "")
 
-                    st.info(
-                        f"🔗 Running enrichment for {enrichment_count} prospect(s) — "
-                        "Apollo → Exa → Claude Sonnet → Claude Opus → Sheets…"
-                    )
-                    with st.status(
-                        f"⏳ Enriching {enrichment_count} prospect(s)…",
-                        expanded=True,
-                    ) as status:
-                        st.write("Apollo contact search → Exa LinkedIn intel → Claude Sonnet qualification → Claude Opus outreach drafting → Sheets…")
-                        try:
-                            from utils.auth import get_current_user
-                            director = get_current_user() or "Unknown"
+                    qualified_results = []
+                    unselected_names  = {
+                        p.get("name", "") for p in grok_prospects
+                        if p.get("name", "") not in enrichment_names
+                    }
 
-                            _grok_usage  = st.session_state.get("grok_usage")
-                            _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
-
-                            with st.spinner("Running pipeline…"):
-                                results = main.run_enrichment_from_selection(
-                                    query=st.session_state.get("grok_query", ""),
-                                    bu=bu,
-                                    all_prospects=grok_prospects,
-                                    enrichment_names=enrichment_names,
-                                    run_id=st.session_state.get("grok_run_id", ""),
-                                    dry_run=is_dry_run,
-                                    discovery=st.session_state.get("grok_discovery"),
-                                    usage=_grok_usage,
-                                    sheets=_grok_sheets,
+                    # Archive unselected immediately
+                    for prospect in grok_prospects:
+                        name = prospect.get("name", "")
+                        if name in unselected_names and not is_dry_run:
+                            try:
+                                stub_analyst = {
+                                    "refined_score": prospect.get("opportunity_score", 0),
+                                    "verdict": "COLD",
+                                    "write_to_sheet": False,
+                                    "skip_reason": "Not selected for qualification by user",
+                                    "top_entry_point": "",
+                                    "score_delta_reasoning": "Archived by user",
+                                    "copywriter_brief": "",
+                                    "transition_gap_confirmed": "",
+                                    "key_risk_if_no_action": "",
+                                }
+                                stub_emails = {
+                                    "visionary_email": {"subject_line": f"{name} — archived", "body": "Not selected for qualification."},
+                                    "operator_email": {"subject_line": "", "body": ""},
+                                }
+                                _grok_sheets.append_lead(
+                                    prospect, stub_analyst, stub_emails,
+                                    contact=None, query=query,
+                                    is_cold=True, bu=bu,
                                 )
-                            if results and not is_dry_run:
-                                usage_sum = results[0].get("usage_summary", {})
-                                if usage_sum:
-                                    try:
-                                        _grok_sheets.write_usage(
-                                            run_id=st.session_state.get("grok_run_id", ""),
-                                            director=director,
-                                            track="Discovery",
-                                            query=st.session_state.get("grok_query", "")[:120],
-                                            companies_researched=len(enrichment_names),
-                                            usage_summary=usage_sum,
-                                            bu=bu,
-                                        )
-                                    except Exception as ue:
-                                        logger.warning(f"Usage write failed: {ue}")
-                            status.update(
-                                label="✅ Enrichment complete!",
-                                state="complete", expanded=True,
-                            )
-                        except Exception as exc:
-                            status.update(
-                                label="❌ Enrichment error",
-                                state="error", expanded=True,
-                            )
-                            st.error(f"**Error:** {exc}")
-                            st.exception(exc)
-                            results = []
+                            except Exception:
+                                pass
 
-                    if results:
-                        for key in ["grok_prospects", "enrichment_selections",
-                                    "sweep_result", "company_selections",
-                                    "grok_usage", "grok_sheets",
-                                    "sweep_usage", "sweep_sheets"]:
-                            st.session_state.pop(key, None)
-                        _display_results(
-                            results, is_dry_run,
-                            st.session_state.get("grok_query", ""), bu,
+                    # Qualify selected companies
+                    placeholders = {
+                        p.get("name", ""): st.empty()
+                        for p in grok_prospects
+                        if p.get("name", "") in enrichment_names
+                    }
+                    for name in enrichment_names:
+                        placeholders[name].markdown(f"⬜ **{name}** · queued")
+
+                    st.info("🔍 Running Apollo → Exa → Sonnet qualification…")
+
+                    for prospect in grok_prospects:
+                        name = prospect.get("name", "")
+                        if name not in enrichment_names:
+                            continue
+                        placeholders[name].markdown(f"⏳ **{name}** · qualifying…")
+                        try:
+                            result = main.qualify_prospect_only(
+                                prospect=prospect,
+                                sheets=_grok_sheets,
+                                query=query,
+                                run_id=run_id,
+                                dry_run=is_dry_run,
+                                usage=_grok_usage,
+                                bu=bu,
+                            )
+                            score   = result.get("refined_score") or 0
+                            verdict = result.get("verdict", "COLD")
+                            v_icon  = "🔥" if verdict == "HOT" else "♨️" if verdict == "WARM" else "❄️"
+                            entry   = result.get("analyst", {}).get("top_entry_point", "")[:60]
+                            placeholders[name].markdown(
+                                f"✅ **{name}** · **{score}** · {verdict} {v_icon}"
+                                + (f"  \n*{entry}*" if entry else "")
+                            )
+                            qualified_results.append(result)
+                        except Exception as exc:
+                            placeholders[name].markdown(f"❌ **{name}** · error: {exc}")
+
+                    st.session_state["qualified_results"] = qualified_results
+                    st.session_state["qualify_run_id"]    = run_id
+                    st.session_state["qualify_sheets"]    = _grok_sheets
+                    st.session_state["qualify_usage"]     = _grok_usage
+
+        # ----------------------------------------------------------------
+        # STAGE F — Outreach selection (Opus)
+        # ----------------------------------------------------------------
+        qualified_results = st.session_state.get("qualified_results", [])
+        hot_warm = [r for r in qualified_results if r.get("verdict") in ("HOT", "WARM")]
+
+        if qualified_results:
+            st.divider()
+            st.subheader("✉️ Select which prospects to draft outreach for")
+            st.caption(
+                "Opus will draft personalised emails for selected HOT/WARM prospects. "
+                "Unselected prospects are written to Sheets without email drafts."
+            )
+
+            if "outreach_selections" not in st.session_state:
+                st.session_state["outreach_selections"] = {
+                    r.get("company", ""): r.get("verdict") in ("HOT", "WARM")
+                    for r in qualified_results
+                }
+
+            with st.form("outreach_selection_form"):
+                for result in qualified_results:
+                    name    = result.get("company", "")
+                    score   = result.get("refined_score") or 0
+                    verdict = result.get("verdict", "COLD")
+                    entry   = result.get("analyst", {}).get("top_entry_point", "")
+                    brief   = result.get("analyst", {}).get("copywriter_brief", "")
+
+                    col_check, col_score, col_info = st.columns([1, 2, 8])
+                    with col_check:
+                        current = st.session_state["outreach_selections"].get(name, False)
+                        st.checkbox(
+                            "", value=current,
+                            key=f"outreach_{name}",
+                            label_visibility="collapsed",
                         )
+                    with col_score:
+                        st.markdown(_score_bar_html(score), unsafe_allow_html=True)
+                        st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
+                    with col_info:
+                        st.markdown(f"**{name}**")
+                        if entry:
+                            st.caption(f"Entry point: {entry}")
+                        if brief:
+                            st.caption(brief[:200])
+
+                outreach_submitted = st.form_submit_button(
+                    "🚀 Draft Outreach with Opus",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if outreach_submitted:
+                _apply_model_overrides()
+                outreach_names = {
+                    r.get("company", "") for r in qualified_results
+                    if st.session_state.get(f"outreach_{r.get('company', '')}", False)
+                }
+
+                _run_id     = st.session_state.get("qualify_run_id", "")
+                _sheets     = st.session_state.get("qualify_sheets") or _get_sc()
+                _usage      = st.session_state.get("qualify_usage")
+                _query      = st.session_state.get("grok_query", "")
+                director    = get_current_user() or "Unknown"
+
+                final_results = []
+                st.info(
+                    f"✉️ Running Opus for {len(outreach_names)} prospect(s), "
+                    f"writing {len(qualified_results) - len(outreach_names)} without outreach…"
+                )
+
+                with st.spinner("Claude Opus drafting outreach + writing to Sheets…"):
+                    for result in qualified_results:
+                        name = result.get("company", "")
+                        skip = name not in outreach_names
+                        try:
+                            final = main.draft_outreach_for_prospect(
+                                result=result,
+                                sheets=_sheets,
+                                query=_query,
+                                run_id=_run_id,
+                                dry_run=is_dry_run,
+                                usage=_usage,
+                                bu=bu,
+                                skip_outreach=skip,
+                            )
+                            final_results.append(final)
+                        except Exception as exc:
+                            logger.warning(f"Outreach failed for {name}: {exc}")
+                            final_results.append(result)
+
+                # Write usage
+                if final_results and not is_dry_run and _usage:
+                    try:
+                        usage_sum = _usage.summary()
+                        _sheets.write_usage(
+                            run_id=_run_id,
+                            director=director,
+                            track="Discovery",
+                            query=_query[:120],
+                            companies_researched=len(final_results),
+                            usage_summary=usage_sum,
+                            bu=bu,
+                        )
+                    except Exception as ue:
+                        logger.warning(f"Usage write failed: {ue}")
+
+                for key in ["grok_prospects", "enrichment_selections",
+                            "qualified_results", "outreach_selections",
+                            "sweep_result", "company_selections",
+                            "grok_usage", "grok_sheets",
+                            "sweep_usage", "sweep_sheets"]:
+                    st.session_state.pop(key, None)
+
+                _display_results(final_results, is_dry_run, _query, bu)
+
+
     # -----------------------------------------------------------------------
     # COMPANY ENRICHMENT TAB
     # -----------------------------------------------------------------------
