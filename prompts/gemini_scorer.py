@@ -37,11 +37,8 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Return your response in this exact format and nothing else. No JSON, no markdown, no preamble. You MUST output all three lines — VERTICAL, SIGNALS, and AGGREGATION:
-
-VERTICAL: [expanded description of target company types with industry terminology]
-SIGNALS: [2-3 thematic signal groups separated by | format: GroupName: description | GroupName: description]
-AGGREGATION: [single sentence naming the best industry list or conference to search]
+Return your response on a SINGLE LINE in this exact format:
+VERTICAL: [description] || SIGNALS: [groups] || AGGREGATION: [hint]
 
 Example of correct output:
 VERTICAL: Regional sports networks (RSNs), professional sports leagues, sports streaming services, collegiate athletic conferences

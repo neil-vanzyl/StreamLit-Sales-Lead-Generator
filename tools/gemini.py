@@ -77,32 +77,20 @@ def enrich_brief(
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
-        # Parse plain text response using section-based approach
-        # Handles both same-line and next-line content after each label
-        sections = {"VERTICAL": "", "SIGNALS": "", "AGGREGATION": ""}
-        current_key = None
+        # Parse single-line response split by ||
+        parts         = raw.strip().split("||")
+        vertical_desc = ""
+        signal_lines  = ""
+        agg_hint      = ""
 
-        for line in raw.splitlines():
-            stripped = line.strip()
-            matched = False
-            for key in sections:
-                if stripped.upper().startswith(f"{key}:"):
-                    current_key = key
-                    rest = stripped[len(key)+1:].strip()
-                    if rest:
-                        sections[key] = rest
-                    matched = True
-                    break
-            if not matched and current_key and stripped:
-                # Continuation line — append to current section
-                if sections[current_key]:
-                    sections[current_key] += " " + stripped
-                else:
-                    sections[current_key] = stripped
-
-        vertical_desc = sections["VERTICAL"]
-        signal_lines  = sections["SIGNALS"]
-        agg_hint      = sections["AGGREGATION"]
+        for part in parts:
+            part = part.strip()
+            if part.upper().startswith("VERTICAL:"):
+                vertical_desc = part[9:].strip()
+            elif part.upper().startswith("SIGNALS:"):
+                signal_lines = part[8:].strip()
+            elif part.upper().startswith("AGGREGATION:"):
+                agg_hint = part[12:].strip()
 
         if not vertical_desc:
             raise ValueError("Could not parse VERTICAL from Gemini response")
