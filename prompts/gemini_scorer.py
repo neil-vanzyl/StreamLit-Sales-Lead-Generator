@@ -37,13 +37,12 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Return your response on a SINGLE LINE in this exact format, with || separating each section:
-VERTICAL: [description] || SIGNALS: [groups] || AGGREGATION: [hint]
+Write exactly three sentences with no labels or formatting:
+1. A description of the target company types using specific industry terminology
+2. What buying signals to look for and why they indicate an Accedo opportunity  
+3. The single best industry source (conference, awards list, or directory) to find these companies
 
-Here is an example of a correct single-line response:
-VERTICAL: Regional sports networks (RSNs), professional sports leagues, sports streaming services || SIGNALS: Platform Modernization: Companies replacing white-label vendor infrastructure | Talent Investment: Active hiring of OTT engineers || AGGREGATION: Search Sports Video Group (SVG) member directory and SportsPro OTT Awards shortlists.
-
-Your response must be a single line like the example above. Do not use newlines.
+Do not use labels like VERTICAL: or SIGNALS:. Just three plain sentences.
 """
 
 # ---------------------------------------------------------------------------

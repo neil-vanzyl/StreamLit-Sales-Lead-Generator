@@ -77,29 +77,10 @@ def enrich_brief(
         if usage_tracker:
             usage_tracker.record_gemini(tokens_in, tokens_out)
 
-        # Parse single-line response split by ||
-        parts         = raw.strip().split("||")
-        vertical_desc = ""
-        signal_lines  = ""
-        agg_hint      = ""
-
-        for part in parts:
-            part = part.strip()
-            if part.upper().startswith("VERTICAL:"):
-                vertical_desc = part[9:].strip()
-            elif part.upper().startswith("SIGNALS:"):
-                signal_lines = part[8:].strip()
-            elif part.upper().startswith("AGGREGATION:"):
-                agg_hint = part[12:].strip()
-
-        if not vertical_desc:
-            raise ValueError("Could not parse VERTICAL from Gemini response")
-
         enriched = (
-            f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical_desc} "
+            f"Find Tier 1, Tier 2, and ambitious Tier 3 companies "
             f"headquartered in {bu_label}.\n\n"
-            f"SIGNAL FOCUS: {signal_lines}\n\n"
-            f"AGGREGATION PRIORITY: {agg_hint}"
+            f"{raw.strip()}"
         )
 
         logger.info(f"Gemini enrichment OK — {len(enriched)} chars")
