@@ -1157,6 +1157,7 @@ else:
                             bu=bu,
                             signals=st.session_state.get("form_signals", []),
                             verticals=selected_verticals_for_sweep,
+                            director=get_current_user() or "",
                             on_vertical_start=_on_v_start,
                             on_vertical_done=_on_v_done,
                         )

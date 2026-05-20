@@ -546,6 +546,7 @@ def _run_single_vertical_sweep(
     run_id: str,
     usage: "RunUsage",
     sheets: SheetsClient,
+    director: str = "",
 ) -> list:
     """
     Run one discovery sweep for a single vertical.
@@ -601,6 +602,23 @@ def _run_single_vertical_sweep(
             duration_ms=duration_ms,
         )
         logger.info(f"  {vertical}: {len(companies)} companies found in {duration_ms}ms")
+
+        # Write usage row immediately so cost is captured even if rep abandons
+        try:
+            usage_summary = usage.summary()
+            if usage_summary.get("total_cost_usd", 0) > 0:
+                sheets.write_usage(
+                    run_id=run_id,
+                    director=director,
+                    track=f"Discovery Sweep ({vertical})",
+                    query=brief[:120],
+                    companies_researched=len(companies),
+                    usage_summary=usage_summary,
+                    bu=bu,
+                )
+        except Exception as ue:
+            logger.warning(f"Usage write failed for {vertical} sweep: {ue}")
+
         return companies
 
     except Exception as exc:
@@ -619,6 +637,7 @@ def run_discovery_sweep(
     bu: str = "",
     signals: list = None,
     verticals: list = None,
+    director: str = "",
     run_id: str = "",
     usage: "RunUsage" = None,
     sheets: SheetsClient = None,
@@ -663,6 +682,7 @@ def run_discovery_sweep(
             run_id=run_id,
             usage=usage,
             sheets=sheets,
+            director=director,
         )
 
         # Deduplicate by normalised company name, keep first occurrence
