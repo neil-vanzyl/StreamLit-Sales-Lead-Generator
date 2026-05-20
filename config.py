@@ -68,7 +68,7 @@ GOOGLE_SEMANTIC_GUIDE_DOC_ID: str = os.environ.get("GOOGLE_SEMANTIC_GUIDE_DOC_ID
 # Gemini
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_DISCOVERY_MODEL: str = "gemini-3-flash-preview"
+GEMINI_DISCOVERY_MODEL: str = "gemini-2.5-flash"
 GEMINI_DISCOVERY_MAX_TOKENS: int = 2048
 
 # ---------------------------------------------------------------------------
@@ -106,19 +106,26 @@ MODEL_OPTIONS: dict = {
     ],
     "gemini": [
         {
-            "label": "Gemini Flash  ·  recommended",
-            "model": "gemini-3-flash-preview",
-            "input_cost":  0.075,
-            "output_cost": 0.30,
+            "label": "Gemini 3.5 Flash  ·  recommended",
+            "model": "gemini-3.5-flash",
+            "input_cost":  1.50,
+            "output_cost": 9.00,
             "note": "Fast, cheap — used for query translation + company scoring",
         },
         {
             "label": "Gemini Pro  ·  deeper reasoning",
             "model": "gemini-2.5-pro",
             "input_cost":  1.25,
-            "output_cost": 5.00,
+            "output_cost": 10.00,
             "note": "Better for ambiguous or complex discovery queries",
         },
+        {
+            "label": "Gemini 2.5 Flash  ·  stable",
+            "model": "gemini-2.5-flash",
+            "input_cost":  0.075,
+            "output_cost": 2.50,
+            "note": "Stable Flash — reliable multi-line output, brief enrichment",
+        }
     ],
     "analyst": [
         {
