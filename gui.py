@@ -963,7 +963,8 @@ else:
                         st.session_state[f"s_{_s}"] = _s in cfg["signals"]
 
                 # Clear downstream state only
-                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
+                for key in ["assembled_brief", "sweep_result",
+                            "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
 
                 st.rerun()
@@ -1028,18 +1029,25 @@ else:
             if context_val.strip():
                 auto_brief += f"\n\nAdditional context: {context_val.strip()}"
 
-            # Keep widget in sync with selections unless user has manually edited
-            current_widget = st.session_state.get("brief_text_area", "")
-            last_auto      = st.session_state.get("last_auto_brief", "")
-            if current_widget == last_auto or current_widget == "":
-                st.session_state["brief_text_area"] = auto_brief
-            st.session_state["last_auto_brief"] = auto_brief
+            # Use Gemini-enhanced brief if available, otherwise auto-built
+            if "assembled_brief" in st.session_state:
+                brief_default = st.session_state["assembled_brief"].get("brief", auto_brief)
+            else:
+                brief_default = auto_brief
+                # Keep widget in sync with current selections unless user has
+                # manually edited it (detect by comparing to last auto-built value)
+                last_auto = st.session_state.get("last_auto_brief", "")
+                current_widget = st.session_state.get("brief_text_area", "")
+                if current_widget == last_auto or current_widget == "":
+                    st.session_state["brief_text_area"] = auto_brief
+                st.session_state["last_auto_brief"] = auto_brief
 
+            # Optional Gemini enhancement
             st.caption("**Research Brief** — edit before searching if needed")
 
             edited_brief = st.text_area(
                 "",
-                value=st.session_state.get("brief_text_area", auto_brief),
+                value=brief_default,
                 height=160,
                 key="brief_text_area",
                 label_visibility="collapsed",
@@ -1076,11 +1084,18 @@ else:
                         sweep = main.run_discovery_sweep(edited_brief, bu=bu)
                         st.session_state["sweep_result"]  = sweep
                         st.session_state["sweep_brief"]   = edited_brief
+                        st.session_state["sweep_usage"]   = sweep.get("usage")
+                        st.session_state["sweep_sheets"]  = sweep.get("sheets")
                         companies = sweep.get("companies", [])
                         status.update(
                             label=f"✅ Found {len(companies)} companies — select which to research",
                             state="complete", expanded=False,
                         )
+                        # Show discovery sweep cost
+                        _sweep_u = sweep.get("usage")
+                        if _sweep_u:
+                            _sweep_u.finish()
+                            render_usage_panel(_sweep_u.summary())
                     except Exception as exc:
                         status.update(label="❌ Error", state="error", expanded=True)
                         st.error(f"**Error:** {exc}")
@@ -1224,18 +1239,30 @@ else:
                         completed_prospects.append(prospect)
 
                     try:
-                        all_prospects = main.run_grok_only(
+                        # Pass sweep's usage+sheets so Grok tokens accumulate
+                        # in the same RunUsage instance from discovery
+                        _sweep_usage  = st.session_state.get("sweep_usage")
+                        _sweep_sheets = st.session_state.get("sweep_sheets")
+
+                        grok_result = main.run_grok_only(
                             query=brief,
                             bu=bu,
                             selected_companies=selected_companies,
                             run_id=run_id,
                             on_company_start=_on_start,
                             on_company_done=_on_done,
+                            usage=_sweep_usage,
+                            sheets=_sweep_sheets,
                         )
-                        st.session_state["grok_prospects"] = all_prospects
-                        st.session_state["grok_run_id"]    = run_id
-                        st.session_state["grok_query"]     = brief
-                        st.session_state["grok_discovery"] = {
+                        all_prospects = grok_result.get("prospects", [])
+
+                        # Store usage+sheets for the enrichment stage
+                        st.session_state["grok_prospects"]  = all_prospects
+                        st.session_state["grok_run_id"]     = run_id
+                        st.session_state["grok_query"]      = brief
+                        st.session_state["grok_usage"]      = grok_result.get("usage")
+                        st.session_state["grok_sheets"]     = grok_result.get("sheets")
+                        st.session_state["grok_discovery"]  = {
                             "discovery_ran": True,
                             "gemini_ran":    True,
                             "all_found":     [],
@@ -1243,6 +1270,13 @@ else:
                             "rejected":      [],
                             "search_strings": [],
                         }
+
+                        # Show interim usage after deep research
+                        _interim_usage = grok_result.get("usage")
+                        if _interim_usage:
+                            _interim_usage.finish()
+                            render_usage_panel(_interim_usage.summary())
+
                         st.success(
                             f"✅ Research complete — "
                             f"{len(all_prospects)} prospects ready for enrichment"
@@ -1338,9 +1372,13 @@ else:
                     try:
                         from core.sheets import SheetsClient
                         from utils.auth import get_current_user
-                        sc       = SheetsClient()
                         director = get_current_user() or "Unknown"
-                        results  = main.run_enrichment_from_selection(
+
+                        # Reuse usage+sheets threaded from sweep → grok
+                        _grok_usage  = st.session_state.get("grok_usage")
+                        _grok_sheets = st.session_state.get("grok_sheets") or SheetsClient()
+
+                        results = main.run_enrichment_from_selection(
                             query=st.session_state.get("grok_query", ""),
                             bu=bu,
                             all_prospects=grok_prospects,
@@ -1348,14 +1386,15 @@ else:
                             run_id=st.session_state.get("grok_run_id", ""),
                             dry_run=is_dry_run,
                             discovery=st.session_state.get("grok_discovery"),
-                            sheets=sc,
+                            usage=_grok_usage,
+                            sheets=_grok_sheets,
                         )
-                        # Write usage row
+                        # Write usage row with fully accumulated cost
                         if results and not is_dry_run:
                             usage_sum = results[0].get("usage_summary", {})
                             if usage_sum:
                                 try:
-                                    sc.write_usage(
+                                    _grok_sheets.write_usage(
                                         run_id=st.session_state.get("grok_run_id", ""),
                                         director=director,
                                         track="Discovery",
@@ -1381,8 +1420,9 @@ else:
 
                 if results:
                     for key in ["grok_prospects", "enrichment_selections",
-                                "assembled_brief", "sweep_result",
-                                "company_selections"]:
+                                "sweep_result", "company_selections",
+                                "grok_usage", "grok_sheets",
+                                "sweep_usage", "sweep_sheets"]:
                         st.session_state.pop(key, None)
                     _display_results(
                         results, is_dry_run,

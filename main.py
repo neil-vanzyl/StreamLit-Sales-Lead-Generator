@@ -721,7 +721,11 @@ def run_grok_only(
 
         usage.end_prospect()
 
-    return all_prospects
+    return {
+        "prospects": all_prospects,
+        "usage":     usage,
+        "sheets":    sheets,
+    }
 
 
 
