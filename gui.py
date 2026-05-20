@@ -1067,6 +1067,12 @@ else:
                 # Enrich with Gemini — fast call, falls back silently if it fails
                 final_brief = auto_brief
                 used_gemini = False
+
+                # Create RunUsage now so Gemini tokens are tracked from the start
+                from utils.usage_tracker import RunUsage as _RunUsage
+                _brief_usage = _RunUsage(", ".join(selected_verticals))
+                _brief_usage.start_prospect("_brief_enrichment")
+
                 try:
                     _gemini_key = (st.secrets.get("GEMINI_API_KEY", "") or
                                    config.GEMINI_API_KEY or
@@ -1082,11 +1088,15 @@ else:
                             verticals=selected_verticals,
                             signals=selected_signals,
                             bu=bu,
+                            usage_tracker=_brief_usage,
                         )
                         final_brief = enrichment.get("enriched_brief", auto_brief)
                         used_gemini = enrichment.get("used_gemini", False)
                     except Exception as _e:
                         st.warning(f"Gemini enrichment debug: {_e}")
+
+                _brief_usage.end_prospect()
+                st.session_state["brief_run_usage"] = _brief_usage
 
                 st.session_state["brief_text_area"]     = final_brief
                 st.session_state["brief_used_gemini"]   = used_gemini
@@ -1166,6 +1176,7 @@ else:
                             signals=st.session_state.get("form_signals", []),
                             verticals=selected_verticals_for_sweep,
                             director=get_current_user() or "",
+                            usage=st.session_state.get("brief_run_usage"),
                             on_vertical_start=_on_v_start,
                             on_vertical_done=_on_v_done,
                         )
