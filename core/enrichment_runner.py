@@ -298,3 +298,149 @@ def run_company_enrichment(
         "cached_date":     "",
         "error":           None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Cost estimation
+# ---------------------------------------------------------------------------
+
+# Approximate costs per company enrichment
+ENRICHMENT_COST_ESTIMATE = {
+    "apollo_domain_resolve": 0.00,   # free
+    "apollo_people_search":  0.00,   # free (master key)
+    "apollo_intent":         0.10,   # Bombora per org
+    "grok_signal_sweep":     0.08,   # ~60k tokens avg at $1.25/M in + $2.50/M out
+}
+
+def estimate_enrichment_cost(company_count: int, cached_count: int = 0) -> dict:
+    """
+    Estimate cost for enriching a list of companies.
+    cached_count companies skip Apollo + Grok entirely.
+    """
+    fresh = company_count - cached_count
+    per_company = (
+        ENRICHMENT_COST_ESTIMATE["apollo_intent"] +
+        ENRICHMENT_COST_ESTIMATE["grok_signal_sweep"]
+    )
+    total = round(fresh * per_company, 2)
+    return {
+        "total_companies": company_count,
+        "cached":          cached_count,
+        "fresh":           fresh,
+        "cost_per_fresh":  per_company,
+        "estimated_total": total,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Input parsing
+# ---------------------------------------------------------------------------
+
+def parse_company_input(text: str = "", csv_bytes: bytes = None) -> list:
+    """
+    Parse company names from:
+    - Comma-separated text input
+    - CSV file bytes (first column used as company name)
+
+    Returns deduplicated list of company name strings.
+    """
+    names = []
+
+    if text and text.strip():
+        # Handle comma-separated or newline-separated
+        for part in text.replace("\n", ",").split(","):
+            name = part.strip().strip('"').strip("'")
+            if name:
+                names.append(name)
+
+    if csv_bytes:
+        import io
+        import csv
+        try:
+            reader = csv.reader(io.StringIO(csv_bytes.decode("utf-8", errors="replace")))
+            for i, row in enumerate(reader):
+                if not row:
+                    continue
+                # Skip header row if first cell looks like a header
+                if i == 0 and row[0].lower() in ("company", "company name", "name", "organisation"):
+                    continue
+                name = row[0].strip().strip('"')
+                if name:
+                    names.append(name)
+        except Exception as exc:
+            logger.warning(f"CSV parse error: {exc}")
+
+    # Deduplicate preserving order
+    seen = set()
+    result = []
+    for n in names:
+        key = n.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(n)
+
+    return result[:25]  # hard cap at 25
+
+
+# ---------------------------------------------------------------------------
+# Bulk enrichment entry point
+# ---------------------------------------------------------------------------
+
+def run_bulk_enrichment(
+    companies: list,
+    bu: str = "",
+    director: str = "",
+    dry_run: bool = False,
+    sheets=None,
+    on_company_start: callable = None,
+    on_company_done: callable = None,
+) -> list:
+    """
+    Enrich a list of company names, one at a time.
+    Calls on_company_start(name, idx, total) before each company.
+    Calls on_company_done(name, result, idx, total) when each completes.
+
+    Args:
+        dry_run: If True, checks cache only — no Apollo/Grok calls, no writes.
+
+    Returns:
+        List of result dicts from run_company_enrichment().
+    """
+    from core.sheets import SheetsClient
+    from datetime import datetime, timezone
+
+    sheets  = sheets or SheetsClient()
+    run_id  = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    total   = len(companies)
+    results = []
+
+    for idx, company in enumerate(companies, 1):
+        if on_company_start:
+            on_company_start(company, idx, total)
+
+        if dry_run:
+            # Cache check only
+            domain = _resolve_domain(company)
+            cached = sheets.get_enrichment_cache(domain) if domain else None
+            result = {
+                "company":    company,
+                "domain":     domain,
+                "from_cache": bool(cached),
+                "dry_run":    True,
+                "error":      None,
+            }
+        else:
+            result = run_company_enrichment(
+                company=company,
+                bu=bu,
+                director=director,
+                run_id=run_id,
+                sheets=sheets,
+            )
+
+        results.append(result)
+
+        if on_company_done:
+            on_company_done(company, result, idx, total)
+
+    return results

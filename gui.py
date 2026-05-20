@@ -913,15 +913,12 @@ else:
 
         VERTICALS = [
             "Sports", "News", "Entertainment", "Faith", "Fitness",
-            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Micro-drama", "FAST", "Other",
+            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Other",
         ]
 
         SIGNALS = {
-            "Platform & Technology": [
+            "🏗️ Platform & Technology": [
                 "First CTV build",
-                "Legacy app upgrade",
-                "Mobile-only focused",
-                "Evaluating native apps",
                 "CTV ambition",
                 "Smart TV app launch",
                 "Platform migration",
@@ -930,13 +927,13 @@ else:
                 "App store complaints",
                 "SSAI/DRM change",
             ],
-            "Product & Design": [
+            "🎨 Product & Design": [
                 "App redesign",
                 "Platform consolidation",
                 "New product/UX leadership",
                 "Rebrand with digital implications",
             ],
-            "Hiring": [
+            "👥 Hiring": [
                 "Hiring: OTT/CTV engineers",
                 "Hiring: Front-end engineers",
                 "Hiring: QA automation",
@@ -944,7 +941,7 @@ else:
                 "Hiring: Product managers",
                 "Hiring: TPMs / delivery leads",
             ],
-            "Commercial & Growth": [
+            "📈 Commercial & Growth": [
                 "Rights without platform",
                 "FAST/AVOD launch",
                 "Funding round",
@@ -986,7 +983,7 @@ else:
                     "APAC": "Asia Pacific",
                 }.get(bu, bu)
                 _new_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {' for atleast one of these verticals: '.join(cfg['verticals'])} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(cfg['verticals'])} companies "
                     f"headquartered in {_bu_label} "
                     f"showing these OTT buying signals: {', '.join(cfg['signals'])}."
                 )
@@ -1052,7 +1049,7 @@ else:
                 }.get(bu, bu)
 
                 auto_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {' for atleast one of these verticals: '.join(selected_verticals)} companies "
+                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(selected_verticals)} companies "
                     f"headquartered in {bu_label} "
                     f"showing these OTT buying signals: {', '.join(selected_signals)}."
                 )
@@ -1448,120 +1445,230 @@ else:
     # COMPANY ENRICHMENT TAB
     # -----------------------------------------------------------------------
     with tab_enrichment:
-        from utils.auth import require_user
-        from core.enrichment_runner import run_company_enrichment
-        import json as _json
+        from utils.auth import get_current_user
+        from core.enrichment_runner import (
+            parse_company_input, estimate_enrichment_cost,
+            run_bulk_enrichment, run_company_enrichment,
+        )
 
         st.subheader("🏢 Company Enrichment")
         st.caption(
-            "Look up decision makers, intent signals, and recent OTT buying "
-            "signals for any company. Results are cached for 90 days."
+            "Enrich up to 25 companies at once — decision makers, intent signals, "
+            "and recent OTT buying signals. Results cached for 90 days per company."
         )
 
-        enrich_company = st.text_input(
-            "Company name",
-            placeholder="e.g. Nexstar Media Group",
-            key="enrichment_company_input",
+        # ---- Input section ----
+        col_text, col_upload = st.columns([3, 1])
+        with col_text:
+            enrich_text = st.text_area(
+                "Company names",
+                placeholder="Nexstar Media Group, Gray Television, Sinclair Broadcast...\n\nor paste one per line",
+                height=100,
+                key="enrichment_text_input",
+            )
+        with col_upload:
+            st.caption("Or upload a CSV")
+            csv_file = st.file_uploader(
+                "",
+                type=["csv"],
+                key="enrichment_csv_upload",
+                label_visibility="collapsed",
+            )
+
+        # Parse input immediately for preview
+        csv_bytes = csv_file.read() if csv_file else None
+        company_list = parse_company_input(enrich_text, csv_bytes)
+
+        if company_list:
+            st.caption(f"**{len(company_list)} companies detected:** {', '.join(company_list[:8])}"
+                       + (f" +{len(company_list)-8} more" if len(company_list) > 8 else ""))
+
+        is_dry_run_enrich = st.checkbox(
+            "Dry run — check cache only, no API calls",
+            key="enrichment_dry_run",
         )
 
-        enrich_run_btn = st.button(
-            "🔍 Enrich Company",
-            type="primary",
-            use_container_width=True,
-            key="enrich_company_btn",
-            disabled=not enrich_company.strip(),
-        )
+        col_est, col_run = st.columns([3, 2])
 
-        if enrich_run_btn:
+        with col_est:
+            if st.button(
+                "📊 Estimate Cost",
+                key="estimate_cost_btn",
+                disabled=not company_list,
+            ):
+                director = get_current_user()
+                if not director:
+                    st.warning("⚠️ Select your name in the sidebar first.")
+                else:
+                    # Quick cache check to estimate fresh vs cached
+                    sc = _get_sc()
+                    cached_count = 0
+                    if sc:
+                        for name in company_list:
+                            from core.enrichment_runner import _resolve_domain
+                            domain = _resolve_domain(name)
+                            if domain and sc.get_enrichment_cache(domain):
+                                cached_count += 1
+
+                    est = estimate_enrichment_cost(len(company_list), cached_count)
+                    st.session_state["enrichment_estimate"] = est
+
+            estimate = st.session_state.get("enrichment_estimate")
+            if estimate:
+                fresh = estimate["fresh"]
+                cached = estimate["cached"]
+                total_cost = estimate["estimated_total"]
+                st.info(
+                    f"**Estimate:** {fresh} fresh · {cached} cached  \n"
+                    f"**~${total_cost:.2f}** total "
+                    f"(${estimate['cost_per_fresh']:.2f}/company)"
+                )
+
+        with col_run:
+            run_enrich_btn = st.button(
+                f"🔍 Enrich {len(company_list)} {'Company' if len(company_list) == 1 else 'Companies'}"
+                if company_list else "⬆️ Add companies above",
+                type="primary",
+                use_container_width=True,
+                key="bulk_enrich_btn",
+                disabled=not company_list,
+            )
+
+        if run_enrich_btn:
             director = get_current_user()
             if not director:
-                st.warning("⚠️ Please select your name in the sidebar first.")
+                st.warning("⚠️ Select your name in the sidebar first.")
             else:
-                with st.status(
-                    f"Enriching {enrich_company}…", expanded=True
-                ) as status:
-                    st.write("Checking cache → Apollo → Grok signal sweep…")
-                    try:
-                        result = run_company_enrichment(
-                            company=enrich_company.strip(),
-                            bu=bu,
-                            director=director,
-                            sheets=_get_sc(),
+                # Confirm if not dry run and cost > $1
+                estimate = st.session_state.get("enrichment_estimate", {})
+                if (not is_dry_run_enrich and
+                        estimate.get("estimated_total", 0) > 1.0 and
+                        not st.session_state.get("enrichment_confirmed")):
+                    st.warning(
+                        f"⚠️ This will cost approximately **${estimate['estimated_total']:.2f}**. "
+                        f"Click **Enrich** again to confirm."
+                    )
+                    st.session_state["enrichment_confirmed"] = True
+                else:
+                    st.session_state.pop("enrichment_confirmed", None)
+                    st.session_state.pop("enrichment_results", None)
+
+                    # Build placeholders for live progress
+                    st.divider()
+                    st.subheader(
+                        f"{'🔍 Checking cache' if is_dry_run_enrich else '🏢 Enriching'} "
+                        f"{len(company_list)} {'company' if len(company_list) == 1 else 'companies'}…"
+                    )
+
+                    placeholders = {name: st.empty() for name in company_list}
+                    for name in company_list:
+                        placeholders[name].markdown(f"⬜ **{name}** · queued")
+
+                    all_results = []
+
+                    def _enrich_start(name, idx, total):
+                        placeholders[name].markdown(
+                            f"⏳ **{name}** · {'checking cache' if is_dry_run_enrich else 'enriching'}… "
+                            f"*({idx}/{total})*"
                         )
-                        st.session_state["enrichment_result"] = result
-                        if result.get("from_cache"):
-                            status.update(
-                                label=f"✅ Loaded from cache ({result.get('cached_date', '')})",
-                                state="complete", expanded=False,
+
+                    def _enrich_done(name, result, idx, total):
+                        if result.get("error"):
+                            placeholders[name].markdown(f"❌ **{name}** · {result['error']}")
+                        elif result.get("dry_run"):
+                            cached = result.get("from_cache", False)
+                            placeholders[name].markdown(
+                                f"{'📦' if cached else '🆕'} **{name}** · "
+                                f"{'cached — free' if cached else 'fresh — ~$0.18'}"
                             )
                         else:
-                            status.update(
-                                label="✅ Enrichment complete",
-                                state="complete", expanded=False,
+                            dm_count = len(result.get("decision_makers", []))
+                            cached   = result.get("from_cache", False)
+                            placeholders[name].markdown(
+                                f"✅ **{name}** · {dm_count} contacts · "
+                                f"{'📦 from cache' if cached else '🆕 fresh'}"
                             )
-                    except Exception as exc:
-                        status.update(label="❌ Error", state="error", expanded=True)
-                        st.error(f"**Error:** {exc}")
-                        st.exception(exc)
+                        all_results.append(result)
 
-        # ---- Display enrichment results ----
-        enrich_result = st.session_state.get("enrichment_result")
-        if enrich_result and not enrich_result.get("error"):
+                    sc = _get_sc()
+                    with st.spinner(
+                        f"{'Checking cache' if is_dry_run_enrich else 'Running enrichment'} "
+                        f"for {len(company_list)} companies…"
+                    ):
+                        run_bulk_enrichment(
+                            companies=company_list,
+                            bu=bu,
+                            director=director,
+                            dry_run=is_dry_run_enrich,
+                            sheets=sc,
+                            on_company_start=_enrich_start,
+                            on_company_done=_enrich_done,
+                        )
+
+                    st.session_state["enrichment_results"] = all_results
+                    if is_dry_run_enrich:
+                        cached_n = sum(1 for r in all_results if r.get("from_cache"))
+                        st.success(
+                            f"✅ Dry run complete — {cached_n} cached, "
+                            f"{len(all_results)-cached_n} would require fresh enrichment"
+                        )
+                    else:
+                        st.success(f"✅ Enrichment complete — {len(all_results)} companies processed")
+
+        # ---- Results display ----
+        enrich_results = st.session_state.get("enrichment_results", [])
+        fresh_results  = [r for r in enrich_results if not r.get("dry_run") and not r.get("error")]
+
+        if fresh_results:
             st.divider()
+            for result in fresh_results:
+                company_name = result.get("company", "")
+                domain       = result.get("domain", "")
+                from_cache   = result.get("from_cache", False)
+                dms          = result.get("decision_makers", [])
+                intent       = result.get("intent_topics", [])
+                grok_sig     = result.get("grok_signal", "")
 
-            company_name = enrich_result.get("company", "")
-            domain       = enrich_result.get("domain", "")
-            from_cache   = enrich_result.get("from_cache", False)
+                with st.expander(
+                    f"{'📦' if from_cache else '🆕'} **{company_name}**"
+                    + (f" · [{domain}](https://{domain})" if domain else "")
+                    + f" · {len(dms)} contacts",
+                    expanded=False,
+                ):
+                    if grok_sig:
+                        st.markdown("**📡 Recent OTT Signal**")
+                        st.info(grok_sig)
 
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"### {company_name}")
-                if domain:
-                    st.caption(f"[{domain}](https://{domain})")
-            with col2:
-                if from_cache:
-                    st.info(f"📦 Cached  \n{enrich_result.get('cached_date', '')[:10]}")
-                else:
-                    st.success("🆕 Fresh run")
+                    if intent:
+                        st.markdown("**🎯 Intent Topics**")
+                        st.write("  ".join(f"`{t}`" for t in intent))
 
-            # Grok signal
-            grok_sig = enrich_result.get("grok_signal", "")
-            if grok_sig:
-                st.markdown("**📡 Recent OTT Signal**")
-                st.info(grok_sig)
+                    if dms:
+                        st.markdown(f"**👥 Decision Makers**")
+                        for dm in dms:
+                            name    = dm.get("name", "")
+                            title   = dm.get("title", "")
+                            li      = dm.get("linkedin", "")
+                            email   = dm.get("email", "")
+                            loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
 
-            # Intent topics
-            intent = enrich_result.get("intent_topics", [])
-            if intent:
-                st.markdown("**🎯 Intent Topics**")
-                st.write("  ".join(f"`{t}`" for t in intent))
+                            dm_c1, dm_c2, dm_c3 = st.columns([3, 2, 2])
+                            with dm_c1:
+                                name_md = f"[{name}]({li})" if li else name
+                                st.markdown(f"**{name_md}**  \n{title}")
+                            with dm_c2:
+                                if email:
+                                    st.caption(f"✉️ {email}")
+                                if loc:
+                                    st.caption(f"📍 {loc}")
+                            with dm_c3:
+                                if li:
+                                    st.markdown(f"[LinkedIn →]({li})")
+                    else:
+                        st.caption("No decision makers found via Apollo.")
 
-            # Decision makers
-            dms = enrich_result.get("decision_makers", [])
-            if dms:
-                st.markdown(f"**👥 Decision Makers** ({len(dms)} found)")
-                for dm in dms:
-                    name    = dm.get("name", "")
-                    title   = dm.get("title", "")
-                    li      = dm.get("linkedin", "")
-                    email   = dm.get("email", "")
-                    loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
-
-                    dm_col1, dm_col2, dm_col3 = st.columns([3, 2, 2])
-                    with dm_col1:
-                        name_md = f"[{name}]({li})" if li else name
-                        st.markdown(f"**{name_md}**  \n{title}")
-                    with dm_col2:
-                        if email:
-                            st.caption(f"✉️ {email}")
-                        if loc:
-                            st.caption(f"📍 {loc}")
-                    with dm_col3:
-                        if li:
-                            st.markdown(f"[LinkedIn →]({li})")
-                    st.divider()
-            else:
-                st.caption("No decision makers found via Apollo.")
+                    if from_cache:
+                        st.caption(f"Cached: {result.get('cached_date', '')[:10]}")
 
     # -----------------------------------------------------------------------
     # ACCOUNT INTELLIGENCE TAB
