@@ -23,6 +23,28 @@ from utils.usage_tracker import load_usage_history
 
 setup_logging(level=logging.INFO)
 
+# ---------------------------------------------------------------------------
+# Shared SheetsClient — one instance per session, reused everywhere
+# Prevents hitting the Sheets API quota from multiple instantiations
+# ---------------------------------------------------------------------------
+
+if "sheets_client" not in st.session_state:
+    try:
+        from core.sheets import SheetsClient as _SheetsClient
+        st.session_state["sheets_client"] = _SheetsClient()
+    except Exception:
+        st.session_state["sheets_client"] = None
+
+def _get_sc():
+    """Return the shared SheetsClient, creating a new one if needed."""
+    if not st.session_state.get("sheets_client"):
+        try:
+            from core.sheets import SheetsClient as _SheetsClient
+            st.session_state["sheets_client"] = _SheetsClient()
+        except Exception:
+            return None
+    return st.session_state["sheets_client"]
+
 
 # ---------------------------------------------------------------------------
 # Suggested prompts loader
@@ -513,11 +535,11 @@ def render_history_sidebar(bu_filter: str = None) -> None:
             or cache_age > 900
             or cached_bu != bu_filter):
         try:
-            from core.sheets import SheetsClient
-            sc = SheetsClient()
-            st.session_state[cache_key]    = sc.get_recent_leads(max_rows=10, bu_filter=bu_filter)
-            st.session_state[cache_ts_key] = now
-            st.session_state[cache_bu_key] = bu_filter
+            sc = _get_sc()
+            if sc:
+                st.session_state[cache_key]    = sc.get_recent_leads(max_rows=10, bu_filter=bu_filter)
+                st.session_state[cache_ts_key] = now
+                st.session_state[cache_bu_key] = bu_filter
         except Exception as exc:
             st.caption(f"Could not load history: {exc}")
             return
@@ -685,7 +707,6 @@ with st.sidebar:
     # Sales Director selector
     # -----------------------------------------------------------------------
     from utils.auth import get_current_user, render_budget_bar
-    from core.sheets import SheetsClient as _SC
 
     selected_director = st.selectbox(
         "👤 Sales Director",
@@ -699,8 +720,7 @@ with st.sidebar:
 
     if selected_director and selected_director != config.SALES_DIRECTORS[0]:
         try:
-            _sc = _SC()
-            render_budget_bar(selected_director, _sc)
+            render_budget_bar(selected_director, _get_sc())
         except Exception:
             st.caption("Budget data unavailable")
     st.divider()
@@ -1334,52 +1354,51 @@ else:
                             "🔗 Apollo → Exa exec intel → "
                             "Claude Sonnet → Claude Opus → Sheets…"
                         )
-                        try:
-                            from core.sheets import SheetsClient
-                            from utils.auth import get_current_user
-                            director = get_current_user() or "Unknown"
+                    try:
+                        from utils.auth import get_current_user
+                        director = get_current_user() or "Unknown"
 
-                            _grok_usage  = st.session_state.get("grok_usage")
-                            _grok_sheets = st.session_state.get("grok_sheets") or SheetsClient()
+                        _grok_usage  = st.session_state.get("grok_usage")
+                        _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
 
-                            results = main.run_enrichment_from_selection(
-                                query=st.session_state.get("grok_query", ""),
-                                bu=bu,
-                                all_prospects=grok_prospects,
-                                enrichment_names=enrichment_names,
-                                run_id=st.session_state.get("grok_run_id", ""),
-                                dry_run=is_dry_run,
-                                discovery=st.session_state.get("grok_discovery"),
-                                usage=_grok_usage,
-                                sheets=_grok_sheets,
-                            )
-                            if results and not is_dry_run:
-                                usage_sum = results[0].get("usage_summary", {})
-                                if usage_sum:
-                                    try:
-                                        _grok_sheets.write_usage(
-                                            run_id=st.session_state.get("grok_run_id", ""),
-                                            director=director,
-                                            track="Discovery",
-                                            query=st.session_state.get("grok_query", "")[:120],
-                                            companies_researched=len(enrichment_names),
-                                            usage_summary=usage_sum,
-                                            bu=bu,
-                                        )
-                                    except Exception as ue:
-                                        logger.warning(f"Usage write failed: {ue}")
-                            status.update(
-                                label="✅ Enrichment complete!",
-                                state="complete", expanded=False,
-                            )
-                        except Exception as exc:
-                            status.update(
-                                label="❌ Enrichment error",
-                                state="error", expanded=True,
-                            )
-                            st.error(f"**Error:** {exc}")
-                            st.exception(exc)
-                            results = []
+                        results = main.run_enrichment_from_selection(
+                            query=st.session_state.get("grok_query", ""),
+                            bu=bu,
+                            all_prospects=grok_prospects,
+                            enrichment_names=enrichment_names,
+                            run_id=st.session_state.get("grok_run_id", ""),
+                            dry_run=is_dry_run,
+                            discovery=st.session_state.get("grok_discovery"),
+                            usage=_grok_usage,
+                            sheets=_grok_sheets,
+                        )
+                        if results and not is_dry_run:
+                            usage_sum = results[0].get("usage_summary", {})
+                            if usage_sum:
+                                try:
+                                    _grok_sheets.write_usage(
+                                        run_id=st.session_state.get("grok_run_id", ""),
+                                        director=director,
+                                        track="Discovery",
+                                        query=st.session_state.get("grok_query", "")[:120],
+                                        companies_researched=len(enrichment_names),
+                                        usage_summary=usage_sum,
+                                        bu=bu,
+                                    )
+                                except Exception as ue:
+                                    logger.warning(f"Usage write failed: {ue}")
+                        status.update(
+                            label="✅ Enrichment complete!",
+                            state="complete", expanded=False,
+                        )
+                    except Exception as exc:
+                        status.update(
+                            label="❌ Enrichment error",
+                            state="error", expanded=True,
+                        )
+                        st.error(f"**Error:** {exc}")
+                        st.exception(exc)
+                        results = []
 
                     if results:
                         for key in ["grok_prospects", "enrichment_selections",
@@ -1429,13 +1448,11 @@ else:
                 ) as status:
                     st.write("Checking cache → Apollo → Grok signal sweep…")
                     try:
-                        from core.sheets import SheetsClient
-                        _sc = SheetsClient()
                         result = run_company_enrichment(
                             company=enrich_company.strip(),
                             bu=bu,
                             director=director,
-                            sheets=_sc,
+                            sheets=_get_sc(),
                         )
                         st.session_state["enrichment_result"] = result
                         if result.get("from_cache"):
@@ -1561,8 +1578,7 @@ else:
                         st.dataframe(df_import.head(10), hide_index=True)
 
                         if st.button("✅ Confirm Import", key="confirm_import"):
-                            from core.sheets import SheetsClient
-                            sc = SheetsClient()
+                            sc = _get_sc()
                             imported = 0
                             for _, row in df_import.iterrows():
                                 sc.upsert_account({
@@ -1593,9 +1609,9 @@ else:
         with col_refresh:
             if st.button("🔄 Load Accounts", key="load_accounts_btn"):
                 try:
-                    from core.sheets import SheetsClient
-                    sc = SheetsClient()
-                    st.session_state[acc_cache_key] = sc.get_accounts(bu_filter=bu)
+                    sc = _get_sc()
+                    if sc:
+                        st.session_state[acc_cache_key] = sc.get_accounts(bu_filter=bu)
                 except Exception as exc:
                     st.error(f"Could not load accounts: {exc}")
 
@@ -1647,8 +1663,7 @@ else:
             ) as status:
                 st.write(f"🔍 Grok researching {len(accounts)} tracked account(s) — skipping discovery…")
                 try:
-                    from core.sheets import SheetsClient
-                    sc = SheetsClient()
+                    sc = _get_sc()
                     results = main.run_account_pipeline(
                         bu=bu,
                         dry_run=is_dry_run,

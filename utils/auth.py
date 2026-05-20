@@ -56,20 +56,28 @@ def require_user() -> str:
 # ---------------------------------------------------------------------------
 
 def get_month_spend(director: str, sheets_client=None) -> float:
-    """
-    Return the total USD spent by this director in the current calendar month.
-    Reads from the Usage Tracker tab in Sheets.
-    Returns 0.0 on any error.
-    """
+    import streamlit as st
+    import time
+    cache_key = f"budget_spend_{director}"
+    cache_ts_key = f"budget_spend_ts_{director}"
+    now = time.monotonic()
+    
+    # Cache for 5 minutes
+    if (cache_key in st.session_state and 
+        now - st.session_state.get(cache_ts_key, 0) < 300):
+        return st.session_state[cache_key]
+    
     if not director or not sheets_client:
         return 0.0
-
     try:
         rows = sheets_client.get_director_month_spend(director)
-        return round(sum(rows), 4)
+        result = round(sum(rows), 4)
+        st.session_state[cache_key] = result
+        st.session_state[cache_ts_key] = now
+        return result
     except Exception as exc:
         logger.warning(f"Auth: could not load spend for {director}: {exc}")
-        return 0.0
+        return st.session_state.get(cache_key, 0.0)
 
 
 def get_budget_remaining(director: str, sheets_client=None) -> float:
