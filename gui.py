@@ -1071,25 +1071,29 @@ else:
                             "grok_prospects", "enrichment_selections"]:
                     st.session_state.pop(key, None)
 
+                st.info("🔍 Grok is scanning the web — this takes 60-90 seconds…")
                 with st.status(
                     "🔍 Searching for companies…", expanded=True
                 ) as status:
                     st.write(
-                        "Grok is scanning the web for companies matching "
-                        "your brief. This takes about 60-90 seconds…"
+                        "Searching trade press, conference exhibitor lists, award "
+                        "shortlists, and market maps for companies matching your brief…"
                     )
                     try:
-                        sweep = main.run_discovery_sweep(edited_brief, bu=bu)
+                        sweep = main.run_discovery_sweep(
+                            edited_brief,
+                            bu=bu,
+                            signals=st.session_state.get("form_signals", []),
+                        )
                         st.session_state["sweep_result"]  = sweep
                         st.session_state["sweep_brief"]   = edited_brief
                         st.session_state["sweep_usage"]   = sweep.get("usage")
                         st.session_state["sweep_sheets"]  = sweep.get("sheets")
                         companies = sweep.get("companies", [])
                         status.update(
-                            label=f"✅ Found {len(companies)} companies — select which to research",
-                            state="complete", expanded=False,
+                            label=f"✅ Found {len(companies)} companies — select which to research below",
+                            state="complete", expanded=True,
                         )
-                        # Store summary for display outside the status block
                         _sweep_u = sweep.get("usage")
                         if _sweep_u:
                             try:
@@ -1226,18 +1230,19 @@ else:
                             _sweep_usage  = st.session_state.get("sweep_usage")
                             _sweep_sheets = st.session_state.get("sweep_sheets")
 
-                            grok_result = main.run_grok_only(
-                                query=brief,
-                                bu=bu,
-                                selected_companies=selected_companies,
-                                run_id=run_id,
-                                on_company_start=_on_start,
-                                on_company_done=_on_done,
-                                usage=_sweep_usage,
-                                sheets=_sweep_sheets,
-                            )
-                            all_prospects = grok_result.get("prospects", [])
+                            with st.spinner("⏳ Grok deep research running — 2-4 minutes per company…"):
+                                grok_result = main.run_grok_only(
+                                    query=brief,
+                                    bu=bu,
+                                    selected_companies=selected_companies,
+                                    run_id=run_id,
+                                    on_company_start=_on_start,
+                                    on_company_done=_on_done,
+                                    usage=_sweep_usage,
+                                    sheets=_sweep_sheets,
+                                )
 
+                            all_prospects = grok_result.get("prospects", [])
                             st.session_state["grok_prospects"]  = all_prospects
                             st.session_state["grok_run_id"]     = run_id
                             st.session_state["grok_query"]      = brief
@@ -1259,12 +1264,12 @@ else:
 
                             st.success(
                                 f"✅ Research complete — "
-                                f"{len(all_prospects)} prospects ready for enrichment"
+                                f"{len(all_prospects)} prospects ready for enrichment below"
                             )
-
                             _snapshot = st.session_state.get("grok_interim_usage")
                             if _snapshot:
                                 render_usage_panel(_snapshot)
+
                         except Exception as exc:
                             st.error(f"**Research error:** {exc}")
                             st.exception(exc)
@@ -1346,59 +1351,61 @@ else:
                         log_stream.truncate(0)
                         log_stream.seek(0)
 
+                    st.info(
+                        f"🔗 Running enrichment for {enrichment_count} prospect(s) — "
+                        "Apollo → Exa → Claude Sonnet → Claude Opus → Sheets…"
+                    )
                     with st.status(
-                        f"Enriching {enrichment_count} prospect(s)…",
+                        f"⏳ Enriching {enrichment_count} prospect(s)…",
                         expanded=True,
                     ) as status:
-                        st.write(
-                            "🔗 Apollo → Exa exec intel → "
-                            "Claude Sonnet → Claude Opus → Sheets…"
-                        )
-                    try:
-                        from utils.auth import get_current_user
-                        director = get_current_user() or "Unknown"
+                        st.write("Apollo contact search → Exa LinkedIn intel → Claude Sonnet qualification → Claude Opus outreach drafting → Sheets…")
+                        try:
+                            from utils.auth import get_current_user
+                            director = get_current_user() or "Unknown"
 
-                        _grok_usage  = st.session_state.get("grok_usage")
-                        _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
+                            _grok_usage  = st.session_state.get("grok_usage")
+                            _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
 
-                        results = main.run_enrichment_from_selection(
-                            query=st.session_state.get("grok_query", ""),
-                            bu=bu,
-                            all_prospects=grok_prospects,
-                            enrichment_names=enrichment_names,
-                            run_id=st.session_state.get("grok_run_id", ""),
-                            dry_run=is_dry_run,
-                            discovery=st.session_state.get("grok_discovery"),
-                            usage=_grok_usage,
-                            sheets=_grok_sheets,
-                        )
-                        if results and not is_dry_run:
-                            usage_sum = results[0].get("usage_summary", {})
-                            if usage_sum:
-                                try:
-                                    _grok_sheets.write_usage(
-                                        run_id=st.session_state.get("grok_run_id", ""),
-                                        director=director,
-                                        track="Discovery",
-                                        query=st.session_state.get("grok_query", "")[:120],
-                                        companies_researched=len(enrichment_names),
-                                        usage_summary=usage_sum,
-                                        bu=bu,
-                                    )
-                                except Exception as ue:
-                                    logger.warning(f"Usage write failed: {ue}")
-                        status.update(
-                            label="✅ Enrichment complete!",
-                            state="complete", expanded=False,
-                        )
-                    except Exception as exc:
-                        status.update(
-                            label="❌ Enrichment error",
-                            state="error", expanded=True,
-                        )
-                        st.error(f"**Error:** {exc}")
-                        st.exception(exc)
-                        results = []
+                            with st.spinner("Running pipeline…"):
+                                results = main.run_enrichment_from_selection(
+                                    query=st.session_state.get("grok_query", ""),
+                                    bu=bu,
+                                    all_prospects=grok_prospects,
+                                    enrichment_names=enrichment_names,
+                                    run_id=st.session_state.get("grok_run_id", ""),
+                                    dry_run=is_dry_run,
+                                    discovery=st.session_state.get("grok_discovery"),
+                                    usage=_grok_usage,
+                                    sheets=_grok_sheets,
+                                )
+                            if results and not is_dry_run:
+                                usage_sum = results[0].get("usage_summary", {})
+                                if usage_sum:
+                                    try:
+                                        _grok_sheets.write_usage(
+                                            run_id=st.session_state.get("grok_run_id", ""),
+                                            director=director,
+                                            track="Discovery",
+                                            query=st.session_state.get("grok_query", "")[:120],
+                                            companies_researched=len(enrichment_names),
+                                            usage_summary=usage_sum,
+                                            bu=bu,
+                                        )
+                                    except Exception as ue:
+                                        logger.warning(f"Usage write failed: {ue}")
+                            status.update(
+                                label="✅ Enrichment complete!",
+                                state="complete", expanded=True,
+                            )
+                        except Exception as exc:
+                            status.update(
+                                label="❌ Enrichment error",
+                                state="error", expanded=True,
+                            )
+                            st.error(f"**Error:** {exc}")
+                            st.exception(exc)
+                            results = []
 
                     if results:
                         for key in ["grok_prospects", "enrichment_selections",

@@ -1,16 +1,187 @@
 """
 prompts/discovery_scout.py — Lightweight Grok SYSTEM prompt for discovery sweep.
 
-Used as the system prompt in run_discovery_sweep() — replaces scout.py entirely
-for the discovery pass. Tells Grok to scan broadly and shallowly rather than
-doing a full intelligence waterfall.
-
-Output feeds the GUI company selection UI. Deep research runs separately
-via scout.py after the rep selects companies.
+Architecture:
+- System prompt: aggregation-first search strategy, no static checklist
+- User prompt: dynamically injects only the signal-relevant search instructions
+- Domain removed from schema (Apollo resolves it during deep research)
+- hq_country kept as strict requirement for BU integrity
 """
 
 from datetime import datetime
+from typing import List
 
+
+# ---------------------------------------------------------------------------
+# Signal → targeted search instruction map
+# Only the instructions matching selected signals are injected.
+# ---------------------------------------------------------------------------
+
+SIGNAL_SEARCH_INSTRUCTIONS = {
+    # OTT / CTV signals
+    "First CTV build": (
+        "Search for companies with strong mobile or social audiences that have "
+        "publicly announced plans to launch on Roku, Fire TV, Apple TV, or Samsung Tizen "
+        "for the first time. Search: 'first connected TV app launch 2025 2026' and "
+        "'expanding from mobile to living room streaming'."
+    ),
+    "CTV expansion": (
+        "Search for companies announcing expansion to additional CTV platforms or new "
+        "territories. Search: 'streaming service new platform launch 2025 2026' and "
+        "'OTT app expansion connected TV'."
+    ),
+    "Smart TV app launch": (
+        "Search for companies launching or relaunching smart TV applications on Samsung "
+        "Tizen, LG webOS, Vizio, or Hisense. Search: 'smart TV app launch 2025 2026' "
+        "and 'Samsung Tizen LG webOS streaming app announcement'."
+    ),
+    "Platform migration": (
+        "Search for companies migrating streaming platforms or replacing their OTT "
+        "infrastructure. Search: 'streaming platform migration 2025 2026' and "
+        "'OTT infrastructure overhaul rebuild'."
+    ),
+    "Vendor migration": (
+        "Search specifically for companies currently running on or departing from "
+        "white-label vendors: ViewLift, 24i, 3SS, OTTera, Endeavor Streaming. "
+        "Search: 'ViewLift customer migration alternative' and '24i OTT platform "
+        "replacement 2025 2026' and 'streaming platform vendor switch'."
+    ),
+    "Video player overhaul": (
+        "Search for companies replacing their video player, switching OVP, or "
+        "migrating CDN or DRM infrastructure. Search: 'video player migration OVP "
+        "switch 2025' and 'streaming CDN DRM infrastructure overhaul'."
+    ),
+    "App store complaints": (
+        "Search for streaming apps with persistent quality issues. Search app store "
+        "reviews and complaints: 'streaming app buffering Roku Fire TV 1 star 2025' "
+        "and '[vertical] streaming app DRM login issues complaints'."
+    ),
+    "RFP activity": (
+        "Search for companies issuing RFPs or actively evaluating streaming technology "
+        "vendors. Search: 'RFP streaming platform OTT 2025 2026' and 'broadcaster "
+        "evaluating streaming technology partners'."
+    ),
+    "SSAI/DRM change": (
+        "Search for companies changing their ad insertion, SSAI, or DRM stack. "
+        "Search: 'SSAI migration streaming 2025' and 'DRM platform switch OTT'."
+    ),
+    # Product / UX signals
+    "App redesign": (
+        "Search for companies announcing major app redesigns or UX overhauls. "
+        "Search: 'streaming app redesign 2025 2026' and 'OTT platform UX overhaul "
+        "new interface launch'."
+    ),
+    "Rebrand": (
+        "Search for media and streaming companies undergoing rebrands that imply "
+        "digital platform updates. Search: 'streaming service rebrand 2025 2026' "
+        "and 'media company new brand identity digital'."
+    ),
+    "Platform consolidation": (
+        "Search for companies consolidating multiple streaming services or apps into "
+        "one unified platform. Search: 'streaming platform consolidation unified app "
+        "2025 2026' and 'merger streaming service single platform'."
+    ),
+    "Leadership change": (
+        "Search for new CTO, CPO, VP Engineering, VP Digital, or Head of Streaming "
+        "appointments at media and sports companies. Search: 'appointed CTO streaming "
+        "media 2025' and 'new VP digital sports broadcaster 2025 2026'."
+    ),
+    "New product/UX leadership": (
+        "Search for companies hiring or recently appointing product and design "
+        "leadership for streaming. Search: 'hired Chief Product Officer streaming "
+        "2025' and 'new Head of Product OTT media company'."
+    ),
+    # Hiring signals
+    "Hiring: OTT/CTV engineers": (
+        "Search LinkedIn Jobs, Greenhouse, and Lever for companies actively hiring "
+        "OTT engineers, CTV developers, Roku developers, or Fire TV engineers. "
+        "Search: site:linkedin.com/jobs 'OTT engineer' OR 'CTV developer' OR "
+        "'Roku developer' streaming 2025 2026."
+    ),
+    "Hiring: Front-end engineers": (
+        "Search for streaming companies hiring React, React Native, or TypeScript "
+        "engineers for video applications. Search: site:linkedin.com/jobs "
+        "'React Native streaming' OR 'frontend engineer OTT' OR 'TypeScript video'."
+    ),
+    "Hiring: QA automation": (
+        "Search for streaming companies hiring QA automation engineers with Cypress, "
+        "Playwright, or Selenium experience. Search: site:linkedin.com/jobs "
+        "'QA automation streaming' OR 'Cypress Playwright OTT' 2025 2026."
+    ),
+    "Hiring: UX/UI designers": (
+        "Search for streaming companies hiring UX or UI designers for CTV or mobile "
+        "video applications. Search: site:linkedin.com/jobs 'UX designer CTV' OR "
+        "'UI designer streaming' OR 'product designer OTT' 2025."
+    ),
+    "Hiring: Product managers": (
+        "Search for streaming companies hiring product managers for OTT, streaming, "
+        "or sports fan experience. Search: site:linkedin.com/jobs 'product manager "
+        "streaming' OR 'PM OTT' OR 'product manager sports digital' 2025 2026."
+    ),
+    "Hiring: TPMs": (
+        "Search for streaming companies hiring Technical Program Managers focused on "
+        "video or platform delivery. Search: site:linkedin.com/jobs 'technical program "
+        "manager streaming' OR 'TPM OTT video platform' 2025."
+    ),
+    # Commercial signals
+    "Rights deal": (
+        "Search for broadcasters and streaming services securing new exclusive content "
+        "or sports rights that require platform expansion. Search: 'exclusive streaming "
+        "rights deal 2025 2026' and 'broadcast rights OTT platform launch deadline'."
+    ),
+    "FAST/AVOD launch": (
+        "Search for companies launching free ad-supported streaming channels or adding "
+        "AVOD tiers. Search: 'FAST channel launch 2025 2026' and 'AVOD tier free "
+        "ad-supported streaming new'."
+    ),
+    "Funding round": (
+        "Search Crunchbase and PR Newswire for Series A, B, or C funding rounds in "
+        "media, streaming, or sports tech over the last 18 months. Search: "
+        "'Series A streaming media funding 2025' and 'raised million streaming "
+        "platform OTT investment'."
+    ),
+    "Market expansion": (
+        "Search for streaming services expanding into new geographic markets or "
+        "launching in new territories. Search: 'streaming service launches in 2025 "
+        "2026 new market' and 'OTT platform international expansion'."
+    ),
+    "New streaming partnership": (
+        "Search for distribution partnerships, content deals, or technology "
+        "integrations announced in streaming. Search: 'streaming partnership "
+        "announced 2025 2026' and 'OTT distribution deal content agreement'."
+    ),
+    "DTC pivot": (
+        "Search for media companies pivoting to direct-to-consumer streaming models. "
+        "Search: 'direct-to-consumer streaming pivot 2025 2026' and 'broadcaster "
+        "DTC streaming launch subscription'."
+    ),
+    "M&A / platform unification": (
+        "Search for acquisitions and mergers in the streaming space requiring platform "
+        "integration. Search: 'streaming company acquisition merger 2025 2026' and "
+        "'OTT platform unification post-merger integration'."
+    ),
+}
+
+# Aggregation-first search targets — always appended regardless of signals
+AGGREGATION_INSTRUCTIONS = """
+AGGREGATION-FIRST SEARCH STRATEGY:
+Do NOT search for individual company press releases one at a time.
+Instead, hunt for documents where industry experts have already compiled lists of relevant companies.
+Run searches against:
+
+1. Conference exhibitor/attendee lists: "IBC 2025 streaming exhibitors", "NAB Show 2025 OTT", "Sportel regional broadcaster attendees", "StreamTV Show 2025 speakers"
+2. Market maps and analyst reports: "2025 streaming video landscape market map", "top emerging sports OTT platforms", "FAST channel market map 2025"
+3. Industry awards shortlists: "Streaming Media Global Industry Awards nominees 2025", "SportsPro OTT Awards shortlist", "CSI Awards streaming nominees"
+4. Vendor customer lists: search for "[vendor name] customers" or "[vendor name] case studies" to find companies using white-label platforms
+
+One exhibitor list or award shortlist can yield 8-10 qualified companies instantly.
+Extract every relevant company name from each document you find.
+"""
+
+
+# ---------------------------------------------------------------------------
+# System prompt
+# ---------------------------------------------------------------------------
 
 def build_discovery_system_prompt() -> str:
     today = datetime.now().strftime("%B %d, %Y")
@@ -21,92 +192,98 @@ a premium OTT front-end development firm.
 
 YOUR ONLY JOB IS DISCOVERY — not deep research.
 
-Scan the open web broadly for company names that match the research brief
-you are given. Use your live web search to find recent signals.
-
-WHAT YOU ARE LOOKING FOR:
-News articles, press releases, job postings, funding announcements, and
-industry coverage from the last 12 months that name specific companies
-showing OTT/streaming buying intent.
+Scan the open web for company names that match the research brief.
+Use your live web search. Return ALL candidates you find — do not pre-filter.
+The sales rep will review and select which companies to research deeply.
 
 WHAT YOU ARE NOT DOING:
 - Do NOT build power maps or identify contacts
 - Do NOT score companies or produce opportunity assessments
 - Do NOT research tech stacks, app ratings, or financial details
 - Do NOT produce outreach or email drafts
-- Do NOT follow the full intelligence waterfall
+- Do NOT pre-filter results — return everything you find
+
+{AGGREGATION_INSTRUCTIONS}
+
+SIGNAL QUALITY:
+PREFER signals that indicate transition readiness:
+- Companies on white-label vendors (ViewLift, 24i, 3SS, OTTera) for 2+ years
+- Active job postings for OTT/CTV engineering roles open >30 days
+- Leadership changes in digital/streaming (new exec = platform review)
+- Rights expansions that likely exceed current vendor capabilities
+- M&A activity requiring platform unification
+
+STILL INCLUDE (note in evidence):
+- Companies that just launched on a vendor in the last 6 months
+- Tier 3 companies if the signal is exceptionally strong
 
 QUALITY RULES:
 - Every company must be real and named in an actual source you found
-- Evidence must be a specific signal with a source — not a generic description
-- Tier 1 and Tier 2 organisations only (roughly 50+ employees)
+- Evidence must include the source name and approximate date
+- hq_country is REQUIRED for every company — do not return a company without it
 - No duplicate parent/subsidiary pairs
 - AIM FOR 10 COMPANIES — return all candidates, let the rep decide
-- If you find fewer than 10, return what you have — never fabricate
-- Prefer signals from the last 12 months
+- Never fabricate companies or evidence
 
-SIGNAL QUALITY GUIDANCE:
-PREFER signals that indicate frustration or transition readiness:
-- Companies that launched on a white-label vendor 2+ years ago (now hitting limits)
-- App store complaints about buffering, DRM, login issues on existing platforms  
-- Job postings for in-house OTT engineers (signals they want to reduce vendor dependency)
-- Leadership changes in streaming/digital (new exec = platform review)
-- Rights expansions that exceed what their current vendor can handle
-
-DEPRIORITISE signals that indicate a company just committed to a vendor:
-- Press releases announcing a new ViewLift/24i/3SS partnership in the last 6 months
-- "Powered by [vendor]" launches in 2025-2026 — these are locked in, not churning
-- Companies that just raised seed/Series A — too early, no budget for bespoke
-
-OUTPUT FORMAT — return ONLY this exact JSON structure, zero preamble, zero markdown:
+Return ONLY this exact JSON, zero preamble, zero markdown:
 {{
   "companies": [
     {{
       "name": "Company Name",
-      "domain": "domain.com",
-      "hq_country": "Country",
-      "evidence": "One specific sentence: what signal was found, source name, and date if known",
-      "signal_type": "CTV launch | rights deal | vendor migration | hiring | funding | app redesign | FAST launch | M&A | DTC pivot | platform complaint | other",
+      "hq_country": "Country (REQUIRED)",
+      "evidence": "Specific signal found, source name, and approximate date",
+      "signal_type": "CTV launch | rights deal | vendor migration | hiring | funding | app redesign | FAST launch | M&A | DTC pivot | platform complaint | vendor customer | first time builder | other",
       "source_url": "https://... or empty string"
     }}
   ],
-  "search_summary": "2-3 sentences: what you searched, what pattern emerged, how many sources checked"
+  "search_summary": "2-3 sentences: what aggregations you searched, what patterns emerged"
 }}"""
 
 
-def build_discovery_user_prompt(brief: str, bu: str = "", max_companies: int = 10) -> str:
+# ---------------------------------------------------------------------------
+# User prompt — dynamic signal injection
+# ---------------------------------------------------------------------------
+
+def build_discovery_user_prompt(
+    brief: str,
+    bu: str = "",
+    signals: List[str] = None,
+    max_companies: int = 10,
+) -> str:
     bu_context = {
         "NAM":  "North America (US, Canada, Mexico)",
         "E&L":  "Europe or Latin America",
         "APAC": "Asia Pacific (including Australia and New Zealand)",
     }.get(bu, "any region")
 
+    # Dynamically inject only the search instructions matching selected signals
+    injected = []
+    if signals:
+        for sig in signals:
+            instruction = SIGNAL_SEARCH_INSTRUCTIONS.get(sig)
+            if instruction and instruction not in injected:
+                injected.append(instruction)
+
+    # Cap at 3 instructions to keep focus sharp
+    injected = injected[:3]
+
+    signal_block = ""
+    if injected:
+        signal_block = (
+            "\n\nTARGETED SEARCH INSTRUCTIONS — execute ONLY these searches "
+            "(matched to the signals selected by the rep):\n"
+            + "\n\n".join(f"{i+1}. {inst}" for i, inst in enumerate(injected))
+        )
+
     return (
         f"RESEARCH BRIEF:\n{brief}\n\n"
-        f"GEOGRAPHY: Focus on companies headquartered in {bu_context}.\n\n"
-        f"SEARCH INSTRUCTIONS — use these specific approaches:\n"
-        f"1. Search trade press: StreamTV Insider, Fierce Video, Variety, Deadline, "
-        f"TechCrunch for announcements matching the brief from the last 12 months\n"
-        f"2. Search LinkedIn Jobs for companies hiring OTT/CTV/streaming engineers "
-        f"or product managers — open roles signal active platform investment\n"
-        f"3. Search Crunchbase and PR Newswire for funding rounds and partnership "
-        f"announcements in streaming/media from the last 12 months\n"
-        f"4. Search Google News for '[vertical] streaming app launch 2025 2026' "
-        f"and '[vertical] CTV platform announcement'\n"
-        f"5. For vendor migration signals specifically: search for companies "
-        f"announcing they are leaving ViewLift, 24i, 3SS, OTTera, or Endeavor Streaming\n\n"
-        f"6. Search for companies currently running on white-label OTT vendors\n"
-        f"(ViewLift, 24i, 3SS, OTTera, Endeavor Streaming) — any of these are\n"
-        f"platform migration candidates by definition\n\n"
-        f"7. Search LinkedIn company pages directly for News and Entertainment\n"
-        f"companies in NAM that list streaming/OTT/CTV in their description\n" 
-        f"but haven't launched a major platform recently\n"
-        f"Return up to {max_companies} companies. Only include companies where you "
-        f"found a real, specific, recent signal — not generic descriptions. "
-        f"Return all companies where you found any relevant signal — even if the evidence is\n"
-        f"indirect or circumstantial. Include companies that are likely matches based on\n" 
-        f"context, not just confirmed matches. Aim for {max_companies} results. \n"
-        f"A lower-confidence result the rep can discard is more useful than an empty list.\n"
-        f"On each run attempt to identify 10 results.\n\n"
+        f"GEOGRAPHY: Focus on companies headquartered in {bu_context}. "
+        f"hq_country is required for every result — skip any company whose "
+        f"headquarters you cannot confirm."
+        f"{signal_block}\n\n"
+        f"TARGET: Return up to {max_companies} companies. "
+        f"Prioritise aggregation sources (conference lists, award shortlists, "
+        f"market maps) over individual press releases. "
+        f"Include all candidates — the rep will filter.\n\n"
         f"Return only the JSON object."
     )

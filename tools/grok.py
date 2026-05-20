@@ -17,14 +17,11 @@ from utils.helpers import with_retries
 logger = logging.getLogger("ott_lead_gen.grok")
 
 @with_retries(max_attempts=3, delay=15.0, exceptions=(Exception,))
-def run_discovery_waterfall(brief: str, bu: str = "", usage_tracker=None) -> dict:
+def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usage_tracker=None) -> dict:
     """
-    Lightweight discovery sweep — uses discovery_scout.py as the system prompt
-    instead of scout.py. Tells Grok to scan broadly and return company names
-    with one-line evidence only. No deep research, no power map, no scoring.
-
-    Called by run_discovery_sweep() in main.py.
-    run_research_waterfall() is used for the subsequent per-company deep dives.
+    Lightweight discovery sweep — uses discovery_scout.py as the system prompt.
+    Dynamically injects targeted search instructions based on selected signals.
+    Returns company names with evidence only — no deep research.
     """
     if not config.XAI_API_KEY:
         raise ValueError("XAI_API_KEY is not set.")
@@ -32,7 +29,7 @@ def run_discovery_waterfall(brief: str, bu: str = "", usage_tracker=None) -> dic
     from prompts.discovery_scout import build_discovery_system_prompt, build_discovery_user_prompt
 
     system_prompt = build_discovery_system_prompt()
-    user_prompt   = build_discovery_user_prompt(brief, bu=bu)
+    user_prompt   = build_discovery_user_prompt(brief, bu=bu, signals=signals or [])
 
     logger.info(f"Grok Discovery: scanning for companies | BU={bu} | brief={brief[:80]}...")
 
@@ -52,7 +49,7 @@ def run_discovery_waterfall(brief: str, bu: str = "", usage_tracker=None) -> dic
             {"type": "web_search"},
             {"type": "x_search"},
         ],
-        #"response_format": {"type": "json_object"},
+        "response_format": {"type": "json_object"},
         "temperature": 0.1,
         "store_messages": True,
     }
@@ -109,8 +106,6 @@ def run_discovery_waterfall(brief: str, bu: str = "", usage_tracker=None) -> dic
     return result
 
 
-@with_retries(max_attempts=3, delay=15.0, exceptions=(Exception,))
-def run_research_waterfall(query: str, usage_tracker=None) -> dict:
 
     if not config.XAI_API_KEY:
         raise ValueError("XAI_API_KEY is not set.")
@@ -152,7 +147,7 @@ def run_research_waterfall(query: str, usage_tracker=None) -> dict:
             {"type": "web_search"}, 
             {"type": "x_search"}
         ],
-        #"response_format": {"type": "json_object"},
+        "response_format": {"type": "json_object"},
         "temperature": 0.1,
         "store_messages": True
     }

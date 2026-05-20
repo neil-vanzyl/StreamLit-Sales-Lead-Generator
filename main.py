@@ -541,25 +541,20 @@ def run_pipeline(query: str, dry_run: bool = False, bu: str = "") -> List[dict]:
 def run_discovery_sweep(
     brief: str,
     bu: str = "",
+    signals: list = None,
     run_id: str = "",
     usage: "RunUsage" = None,
     sheets: SheetsClient = None,
 ) -> dict:
     """
     Lightweight Grok pass using the discovery system prompt (not scout.py).
-    Scans the web broadly for company names with one-line evidence each.
-    Fast (~60-90s), cheap, no deep research.
+    Dynamically injects targeted search instructions based on selected signals.
+    Scans aggregation sources (conference lists, award shortlists, market maps)
+    for company names with one-line evidence. Fast (~60-90s), cheap.
 
-    Returns:
-        {
-            "run_id":         str,
-            "companies":      List[dict],
-            "search_summary": str,
-            "bu":             str,
-            "brief":          str,
-            "usage":          RunUsage,
-            "sheets":         SheetsClient,
-        }
+    Args:
+        signals: List of signal strings selected in the intake form —
+                 used to inject targeted search instructions into the prompt
     """
     from tools.grok import run_discovery_waterfall
 
@@ -568,7 +563,7 @@ def run_discovery_sweep(
     sheets = sheets or SheetsClient()
 
     logger.info(f"\n{'='*65}")
-    logger.info(f"Discovery Sweep: BU={bu} | brief={brief[:80]}...")
+    logger.info(f"Discovery Sweep: BU={bu} | signals={signals} | brief={brief[:60]}...")
     logger.info(f"{'='*65}")
 
     usage.start_prospect("_discovery_sweep")
@@ -577,7 +572,7 @@ def run_discovery_sweep(
     search_summary = ""
 
     try:
-        result         = run_discovery_waterfall(brief, bu=bu, usage_tracker=usage)
+        result         = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
         companies      = result.get("companies", [])
         search_summary = result.get("search_summary", "")
         duration_ms    = int((time.monotonic() - t0) * 1000)
