@@ -76,6 +76,8 @@ def render_email_gate() -> bool:
             email = email.strip().lower()
             if not email or "@" not in email:
                 st.error("Please enter a valid email address.")
+            elif not email.endswith("@accedo.tv"):
+                st.error("Please enter your Accedo email address (@accedo.tv).")
             else:
                 st.session_state["user_email"]       = email
                 st.session_state["selected_director"] = email
