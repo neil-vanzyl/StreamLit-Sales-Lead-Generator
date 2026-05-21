@@ -106,7 +106,14 @@ MODEL_OPTIONS: dict = {
     ],
     "gemini": [
         {
-            "label": "Gemini 3.5 Flash  ·  recommended",
+            "label": "Gemini 2.5 Flash  ·  recommended",
+            "model": "gemini-2.5-flash",
+            "input_cost":  0.075,
+            "output_cost": 2.50,
+            "note": "Stable Flash — reliable multi-line output, brief enrichment",
+        },
+        {
+            "label": "Gemini 3.5 Flash  ·  new",
             "model": "gemini-3.5-flash",
             "input_cost":  1.50,
             "output_cost": 9.00,
@@ -119,13 +126,6 @@ MODEL_OPTIONS: dict = {
             "output_cost": 10.00,
             "note": "Better for ambiguous or complex discovery queries",
         },
-        {
-            "label": "Gemini 2.5 Flash  ·  stable",
-            "model": "gemini-2.5-flash",
-            "input_cost":  0.075,
-            "output_cost": 2.50,
-            "note": "Stable Flash — reliable multi-line output, brief enrichment",
-        }
     ],
     "analyst": [
         {
