@@ -1,13 +1,13 @@
 """
 utils/auth.py — Identity and budget management.
 
-Today: email entry on app load stored in session state.
-Future: replace get_current_user() body with OAuth/JWT token lookup.
-Nothing else in the codebase needs to change when auth method switches.
+Auth is handled via Streamlit's built-in Google OAuth (st.login / st.user).
+Only @accedo.tv accounts are permitted. To swap providers, change the
+provider name passed to st.login() and update the [auth.<provider>] block
+in .streamlit/secrets.toml.
 """
 
 import logging
-import time
 from typing import Optional
 
 import streamlit as st
@@ -18,77 +18,66 @@ logger = logging.getLogger("ott_lead_gen.auth")
 
 
 # ---------------------------------------------------------------------------
-# Identity — swap this function body when moving to SSO
+# Identity
 # ---------------------------------------------------------------------------
 
 def get_current_user() -> Optional[str]:
-    """
-    Return the current user's email address.
-    Returns None if not yet authenticated.
-
-    MIGRATION PATH TO SSO:
-    Replace the body of this function with:
-        token = st.experimental_get_query_params().get("token", [None])[0]
-        return verify_jwt(token)
-    Everything else calls this function and never needs to change.
-    """
-    return st.session_state.get("user_email") or None
+    """Return the authenticated user's email, or None if not logged in."""
+    user = getattr(st, "user", None)
+    if not user or not user.is_logged_in:
+        return None
+    email = (user.email or "").strip().lower()
+    return email if email.endswith("@accedo.tv") else None
 
 
 def require_user() -> str:
     """Return current user or stop with a prompt."""
     user = get_current_user()
     if not user:
-        st.warning("Please enter your email address to continue.")
+        st.warning("Please sign in to continue.")
         st.stop()
     return user
 
 
 def render_email_gate() -> bool:
     """
-    Show an email entry gate on app load if the user hasn't identified themselves.
-    Returns True if the user is authenticated, False if the gate is showing.
+    Enforce Google OAuth login restricted to @accedo.tv accounts.
+    Returns True if authenticated, False if the gate is showing (app should stop).
     Call this at the very top of the main app body.
     """
-    if st.session_state.get("user_email"):
-        return True
+    user = getattr(st, "user", None)
 
-    # Centre the gate with columns
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("## 🎯 Accedo Lead Scout")
-        st.markdown("---")
-        st.markdown("Enter your email address to continue.")
+    if not user or not user.is_logged_in:
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.markdown("## 🎯 Accedo Lead Scout")
+            st.markdown("---")
+            st.markdown("Sign in with your Accedo Google account to continue.")
+            if st.button("Sign in with Google", type="primary", use_container_width=True):
+                st.login("google")
+        return False
 
-        with st.form("email_gate_form"):
-            email = st.text_input(
-                "Work email",
-                placeholder="you@accedo.tv",
-                key="email_gate_input",
-            )
-            submitted = st.form_submit_button(
-                "Continue →",
-                use_container_width=True,
-                type="primary",
-            )
+    email = (user.email or "").strip().lower()
+    if not email.endswith("@accedo.tv"):
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.error(f"Access restricted to @accedo.tv accounts. You signed in as **{email}**.")
+            if st.button("Sign out", key="wrong_account_signout"):
+                st.logout()
+        return False
 
-        if submitted:
-            email = email.strip().lower()
-            if not email or "@" not in email:
-                st.error("Please enter a valid email address.")
-            elif not email.endswith("@accedo.tv"):
-                st.error("Please enter your Accedo email address (@accedo.tv).")
-            else:
-                st.session_state["user_email"]       = email
-                st.session_state["selected_director"] = email
-                st.rerun()
+    # Sync selected_director for budget-tracking compatibility
+    if not st.session_state.get("selected_director"):
+        st.session_state["selected_director"] = email
 
-    return False
+    return True
 
 
 # ---------------------------------------------------------------------------
 # Budget management
 # ---------------------------------------------------------------------------
+
+import time
 
 def get_month_spend(director: str, sheets_client=None) -> float:
     """

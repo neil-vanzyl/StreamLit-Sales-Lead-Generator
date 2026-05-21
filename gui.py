@@ -728,9 +728,8 @@ with st.sidebar:
         except Exception:
             st.caption("Budget data unavailable")
         if st.button("Sign out", key="sign_out_btn", use_container_width=False):
-            st.session_state.pop("user_email", None)
             st.session_state.pop("selected_director", None)
-            st.rerun()
+            st.logout()
     st.divider()
 
     # -----------------------------------------------------------------------

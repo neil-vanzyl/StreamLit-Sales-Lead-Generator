@@ -1,6 +1,7 @@
 # Secrets — never commit these
 .env
 service_account.json
+.streamlit/secrets.toml
 
 # Python
 __pycache__/
