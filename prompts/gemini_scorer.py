@@ -37,12 +37,11 @@ SELECTED SIGNALS: {signals}
 GEOGRAPHY: {bu_label}
 AUTO-BUILT BRIEF: {auto_brief}
 
-Write exactly three sentences with no labels or formatting:
+Write exactly two sentences with no labels or formatting:
 1. A description of the target company types using specific industry terminology
-2. What buying signals to look for and why they indicate an Accedo opportunity  
-3. The single best industry source (conference, awards list, or directory) to find these companies
+2. What buying signals to look for and the single best industry source (conference, awards list, or directory) to find these companies
 
-Do not use labels like VERTICAL: or SIGNALS:. Just three plain sentences.
+Do not use labels like VERTICAL: or SIGNALS:. Just two plain sentences.
 """
 
 # ---------------------------------------------------------------------------
