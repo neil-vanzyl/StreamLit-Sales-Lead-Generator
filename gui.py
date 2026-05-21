@@ -85,6 +85,14 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Email gate — must authenticate before accessing the tool
+# ---------------------------------------------------------------------------
+from utils.auth import get_current_user, render_budget_bar, render_email_gate
+
+if not render_email_gate():
+    st.stop()
+
+# ---------------------------------------------------------------------------
 # Session state helpers
 # ---------------------------------------------------------------------------
 
@@ -708,25 +716,21 @@ with st.sidebar:
     st.divider()
 
     # -----------------------------------------------------------------------
-    # Sales Director selector
+    # Logged-in user display
     # -----------------------------------------------------------------------
     from utils.auth import get_current_user, render_budget_bar
 
-    selected_director = st.selectbox(
-        "👤 Sales Director",
-        options=config.SALES_DIRECTORS,
-        index=config.SALES_DIRECTORS.index(
-            st.session_state.get("selected_director", config.SALES_DIRECTORS[0])
-        ),
-        key="selected_director",
-        help="Select your name to track usage and budget",
-    )
-
-    if selected_director and selected_director != config.SALES_DIRECTORS[0]:
+    current_user = get_current_user()
+    if current_user:
+        st.caption(f"👤 **{current_user}**")
         try:
-            render_budget_bar(selected_director, _get_sc())
+            render_budget_bar(current_user, _get_sc())
         except Exception:
             st.caption("Budget data unavailable")
+        if st.button("Sign out", key="sign_out_btn", use_container_width=False):
+            st.session_state.pop("user_email", None)
+            st.session_state.pop("selected_director", None)
+            st.rerun()
     st.divider()
 
     # -----------------------------------------------------------------------
@@ -974,7 +978,7 @@ else:
         with col_title:
             st.markdown("#### Find Companies")
         with col_rand:
-            if st.button("🎲 Randomize", key="randomize_btn",
+            if st.button("Randomize", key="randomize_btn",
                          use_container_width=True,
                          help="Auto-fill with a random discovery scenario"):
                 import random as _random
