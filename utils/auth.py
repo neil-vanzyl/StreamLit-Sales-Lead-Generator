@@ -152,6 +152,13 @@ def render_email_gate() -> bool:
         st.markdown("## 🎯 Accedo Lead Scout")
         st.markdown("---")
         st.markdown("Sign in with your Accedo Google account to continue.")
+        # TEMP DEBUG — remove after secrets issue is resolved
+        try:
+            secret_keys = list(st.secrets.keys())
+        except Exception as e:
+            secret_keys = [f"ERROR: {e}"]
+        st.caption(f"[debug] secrets keys: {secret_keys} | client_id present: {'GOOGLE_CLIENT_ID' in secret_keys}")
+        # END TEMP DEBUG
         auth_url = _build_auth_url()
         # target="_self" keeps OAuth in the same tab so the callback lands correctly
         st.markdown(
