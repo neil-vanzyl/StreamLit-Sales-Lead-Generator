@@ -32,16 +32,33 @@ _SCOPES              = "openid email profile"
 
 
 def _cfg(key: str, default: str = "") -> str:
+    # Try st.secrets first (Streamlit Cloud), then env vars
     try:
-        return st.secrets.get(key) or os.environ.get(key, default)
-    except Exception:
-        return os.environ.get(key, default)
+        val = st.secrets[key]
+        if val:
+            return val
+    except KeyError:
+        pass
+    except Exception as exc:
+        logger.warning("st.secrets access error for %s: %s", key, exc)
+    return os.environ.get(key, default)
 
 
 def _build_auth_url() -> str:
+    client_id    = _cfg("GOOGLE_CLIENT_ID")
+    redirect_uri = _cfg("GOOGLE_REDIRECT_URI", "http://localhost:8501/")
+
+    if not client_id:
+        st.error(
+            "**Configuration error:** `GOOGLE_CLIENT_ID` is not set in Streamlit secrets. "
+            "Please add it under Settings → Secrets in the Streamlit Cloud dashboard.",
+            icon="🔑",
+        )
+        st.stop()
+
     params = {
-        "client_id":     _cfg("GOOGLE_CLIENT_ID"),
-        "redirect_uri":  _cfg("GOOGLE_REDIRECT_URI", "http://localhost:8501/"),
+        "client_id":     client_id,
+        "redirect_uri":  redirect_uri,
         "response_type": "code",
         "scope":         _SCOPES,
         "hd":            "accedo.tv",
