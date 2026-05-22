@@ -1,98 +1,21 @@
 """
 utils/auth.py — Identity and budget management.
 
-Auth uses a manual Google OAuth 2.0 code flow via plain HTTP requests,
-bypassing Streamlit's built-in OAuth infrastructure entirely.
-
-Flow:
-  1. render_email_gate() shows a "Sign in with Google" link.
-  2. Google redirects back to GOOGLE_REDIRECT_URI with ?code=... in the URL.
-  3. On the next render, the code is detected via st.query_params and exchanged
-     for user info using Google's token + userinfo endpoints.
-  4. The verified @accedo.tv email is stored in session_state.
+Auth is handled via Streamlit's built-in Google OAuth (st.login / st.user).
+Only @accedo.tv accounts are permitted. To swap providers, change the
+provider name passed to st.login() and update the [auth.<provider>] block
+in .streamlit/secrets.toml.
 """
 
 import logging
-import os
 import time
-import urllib.parse
 from typing import Optional
 
-import requests
 import streamlit as st
 
 import config
 
 logger = logging.getLogger("ott_lead_gen.auth")
-
-_GOOGLE_AUTH_URL     = "https://accounts.google.com/o/oauth2/v2/auth"
-_GOOGLE_TOKEN_URL    = "https://oauth2.googleapis.com/token"
-_GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
-_SCOPES              = "openid email profile"
-
-
-def _cfg(key: str, default: str = "") -> str:
-    # Try st.secrets first (Streamlit Cloud), then env vars
-    try:
-        val = st.secrets[key]
-        if val:
-            return val
-    except KeyError:
-        pass
-    except Exception as exc:
-        logger.warning("st.secrets access error for %s: %s", key, exc)
-    return os.environ.get(key, default)
-
-
-def _build_auth_url() -> str:
-    client_id    = _cfg("GOOGLE_CLIENT_ID")
-    redirect_uri = _cfg("GOOGLE_REDIRECT_URI", "http://localhost:8501/")
-
-    if not client_id:
-        st.error(
-            "**Configuration error:** `GOOGLE_CLIENT_ID` is not set in Streamlit secrets. "
-            "Please add it under Settings → Secrets in the Streamlit Cloud dashboard.",
-            icon="🔑",
-        )
-        st.stop()
-
-    params = {
-        "client_id":     client_id,
-        "redirect_uri":  redirect_uri,
-        "response_type": "code",
-        "scope":         _SCOPES,
-        "hd":            "accedo.tv",
-        "access_type":   "online",
-        "prompt":        "select_account",
-    }
-    return _GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params)
-
-
-def _exchange_code(code: str) -> Optional[dict]:
-    """Exchange an authorization code for Google user info."""
-    try:
-        token_resp = requests.post(_GOOGLE_TOKEN_URL, data={
-            "code":          code,
-            "client_id":     _cfg("GOOGLE_CLIENT_ID"),
-            "client_secret": _cfg("GOOGLE_CLIENT_SECRET"),
-            "redirect_uri":  _cfg("GOOGLE_REDIRECT_URI", "http://localhost:8501/"),
-            "grant_type":    "authorization_code",
-        }, timeout=10)
-        if not token_resp.ok:
-            logger.error("Token exchange failed: %s %s", token_resp.status_code, token_resp.text)
-            return None
-        access_token = token_resp.json().get("access_token")
-        if not access_token:
-            return None
-        userinfo_resp = requests.get(
-            _GOOGLE_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=10,
-        )
-        return userinfo_resp.json() if userinfo_resp.ok else None
-    except Exception as exc:
-        logger.error("OAuth exchange error: %s", exc)
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +23,12 @@ def _exchange_code(code: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def get_current_user() -> Optional[str]:
-    """Return the authenticated user's email, or None if not signed in."""
-    return st.session_state.get("user_email") or None
+    """Return the authenticated user's email, or None if not logged in."""
+    user = getattr(st, "user", None)
+    if not user or not user.is_logged_in:
+        return None
+    email = (user.email or "").strip().lower()
+    return email if email.endswith("@accedo.tv") else None
 
 
 def require_user() -> str:
@@ -115,60 +42,35 @@ def require_user() -> str:
 
 def render_email_gate() -> bool:
     """
-    Enforce Google OAuth sign-in restricted to @accedo.tv accounts.
+    Enforce Google OAuth login restricted to @accedo.tv accounts.
     Returns True if authenticated, False if the gate is showing (app should stop).
     Call this at the very top of the main app body.
     """
-    # ---- Handle OAuth callback (Google redirected back with ?code=...) ----
-    if "code" in st.query_params:
-        code = st.query_params["code"]
-        st.query_params.clear()
+    user = getattr(st, "user", None)
 
-        with st.spinner("Completing sign-in..."):
-            user_info = _exchange_code(code)
+    if not user or not user.is_logged_in:
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.markdown("## 🎯 Accedo Lead Scout")
+            st.markdown("---")
+            st.markdown("Sign in with your Accedo Google account to continue.")
+            if st.button("Sign in with Google", type="primary", use_container_width=True):
+                st.login("google")
+        return False
 
-        if not user_info:
-            st.error("Sign-in failed. Please try again.")
-            return False
+    email = (user.email or "").strip().lower()
+    if not email.endswith("@accedo.tv"):
+        _, col, _ = st.columns([1, 2, 1])
+        with col:
+            st.error(f"Access restricted to @accedo.tv accounts. You signed in as **{email}**.")
+            if st.button("Sign out", key="wrong_account_signout"):
+                st.logout()
+        return False
 
-        email = (user_info.get("email") or "").strip().lower()
-        if not email.endswith("@accedo.tv"):
-            _, col, _ = st.columns([1, 2, 1])
-            with col:
-                st.error(f"Access restricted to @accedo.tv accounts. You signed in as **{email}**.")
-            return False
-
-        st.session_state["user_email"]        = email
+    if not st.session_state.get("selected_director"):
         st.session_state["selected_director"] = email
-        st.rerun()
 
-    # ---- Already authenticated ----
-    if st.session_state.get("user_email"):
-        return True
-
-    # ---- Sign-in gate ----
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("## 🎯 Accedo Lead Scout")
-        st.markdown("---")
-        st.markdown("Sign in with your Accedo Google account to continue.")
-        # TEMP DEBUG — remove after secrets issue is resolved
-        try:
-            secret_keys = list(st.secrets.keys())
-        except Exception as e:
-            secret_keys = [f"ERROR: {e}"]
-        st.caption(f"[debug] secrets keys: {secret_keys} | client_id present: {'GOOGLE_CLIENT_ID' in secret_keys}")
-        # END TEMP DEBUG
-        auth_url = _build_auth_url()
-        # target="_self" keeps OAuth in the same tab so the callback lands correctly
-        st.markdown(
-            f'<a href="{auth_url}" target="_self" style="display:block;text-decoration:none;">'
-            f'<div style="background:#4285F4;color:#fff;text-align:center;padding:10px 24px;'
-            f'border-radius:4px;font-size:16px;cursor:pointer;font-family:sans-serif;'
-            f'font-weight:500;margin-top:8px;">Sign in with Google</div></a>',
-            unsafe_allow_html=True,
-        )
-    return False
+    return True
 
 
 # ---------------------------------------------------------------------------
