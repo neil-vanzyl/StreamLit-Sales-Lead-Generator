@@ -893,6 +893,11 @@ with st.sidebar:
         _api_status("GEMINI_API_KEY",        "Gemini (discovery)")
 
     st.divider()
+    if st.button("❓ Help & Reference", use_container_width=True, key="help_btn"):
+        st.session_state["view_mode"] = "help"
+        st.rerun()
+
+    st.divider()
     st.markdown(f"**Run History** · BU={selected_bu}")
     render_history_sidebar(bu_filter=selected_bu)
 
@@ -958,7 +963,7 @@ def _handle_view_mode() -> bool:
         if row:
             col1, col2 = st.columns([1, 5])
             with col1:
-                if st.button("← Back to last run"):
+                if st.button("← Back"):
                     st.session_state["view_mode"] = "run"
                     st.rerun()
             with col2:
@@ -969,6 +974,15 @@ def _handle_view_mode() -> bool:
             st.divider()
             render_history_card(row)
             return True
+
+    if st.session_state.get("view_mode") == "help":
+        if st.button("← Back"):
+            st.session_state["view_mode"] = "run"
+            st.rerun()
+        st.divider()
+        _render_help()
+        return True
+
     return False
 
 
@@ -979,8 +993,8 @@ else:
     # ---------------------------------------------------------------------------
     # Two-track tabs
     # ---------------------------------------------------------------------------
-    tab_discovery, tab_enrichment, tab_accounts, tab_help = st.tabs([
-        "🔍 Find Companies", "🏢 Enrich Companies", "📋 Account Intelligence", "❓ Help"
+    tab_discovery, tab_enrichment, tab_accounts = st.tabs([
+        "🔍 Find Companies", "🏢 Enrich Companies", "📋 Account Intelligence"
     ])
 
     # -----------------------------------------------------------------------
@@ -2118,27 +2132,29 @@ else:
                 _display_results(results, is_dry_run, f"[ACCOUNT] BU={bu}", bu)
 
 
-    # -----------------------------------------------------------------------
-    # HELP TAB
-    # -----------------------------------------------------------------------
-    with tab_help:
-        st.subheader("❓ Help & Reference")
-        st.caption("Everything you need to know to get the most out of Lead Scout.")
 
-        help_how, help_glossary, help_faq = st.tabs([
-            "📖 How to Use", "📚 Glossary", "💬 FAQ"
-        ])
+# ---------------------------------------------------------------------------
+# Help page (rendered via sidebar button, not a tab)
+# ---------------------------------------------------------------------------
 
-        # ---- HOW TO USE ----
-        with help_how:
-            st.markdown("## How Lead Scout Works")
-            st.markdown(
-                "Lead Scout has three tools. Use the tabs at the top of the page to switch between them. "
-                "Pick the one that matches what you're trying to do:"
-            )
+def _render_help() -> None:
+    st.subheader("❓ Help & Reference")
+    st.caption("Everything you need to know to get the most out of Lead Scout.")
 
-            with st.expander("🔍 **Find Companies** — I want to discover new prospects I haven't targeted yet", expanded=True):
-                st.markdown("""
+    help_how, help_glossary, help_faq = st.tabs([
+        "📖 How to Use", "📚 Glossary", "💬 FAQ"
+    ])
+
+    # ---- HOW TO USE ----
+    with help_how:
+        st.markdown("## How Lead Scout Works")
+        st.markdown(
+            "Lead Scout has three tools. Use the tabs at the top of the page to switch between them. "
+            "Pick the one that matches what you're trying to do:"
+        )
+
+        with st.expander("🔍 **Find Companies** — I want to discover new prospects I haven't targeted yet", expanded=True):
+            st.markdown("""
 **Use this when:** You want to find companies in the market for Accedo's OTT platform services that you haven't identified yet.
 
 **Step 1 — Tell Lead Scout what you're looking for**
@@ -2175,10 +2191,10 @@ For each qualified prospect, Lead Scout drafts two personalised outreach emails:
 Select the prospects you want email drafts for and click **Draft Outreach with Opus**.
 
 **Results are automatically saved to your Google Sheet** (unless Preview Mode is on).
-                """)
+            """)
 
-            with st.expander("🏢 **Enrich Companies** — I already know who I want to target", expanded=False):
-                st.markdown("""
+        with st.expander("🏢 **Enrich Companies** — I already know who I want to target", expanded=False):
+            st.markdown("""
 **Use this when:** You have a list of specific companies and want to find decision makers and buying signals without going through the full discovery flow.
 
 **Step 1 — Enter company names**
@@ -2196,10 +2212,10 @@ Click **Enrich Companies**. For each company, Lead Scout returns:
 Results are cached for 90 days. If you look up the same company again within that window, it's instant and free.
 
 **Tip:** Use **Preview** mode first to see what's already cached before spending credits.
-                """)
+            """)
 
-            with st.expander("📋 **Account Intelligence** — I want to re-research my tracked accounts", expanded=False):
-                st.markdown("""
+        with st.expander("📋 **Account Intelligence** — I want to re-research my tracked accounts", expanded=False):
+            st.markdown("""
 **Use this when:** You have accounts already saved in your Accounts list and want fresh intelligence on them — without going through the search step.
 
 **Step 1 — Import accounts (first time only)**
@@ -2210,17 +2226,17 @@ Click **Load Accounts** to see your tracked accounts for the current region. Acc
 
 **Step 3 — Run intelligence**
 Click **Run Account Intelligence**. Lead Scout researches each account directly (no search step) and returns scored results, which are saved to your Google Sheet.
-                """)
+            """)
 
-        # ---- GLOSSARY ----
-        with help_glossary:
-            st.markdown("## Glossary of Terms")
+    # ---- GLOSSARY ----
+    with help_glossary:
+        st.markdown("## Glossary of Terms")
 
-            col_a, col_b = st.columns(2)
+        col_a, col_b = st.columns(2)
 
-            with col_a:
-                st.markdown("#### Scoring & Verdicts")
-                st.markdown("""
+        with col_a:
+            st.markdown("#### Scoring & Verdicts")
+            st.markdown("""
 **Opportunity Score (0–100)**
 How likely a company is to be in the market for Accedo's services right now, based on publicly available signals. Higher = stronger buying intent.
 
@@ -2241,10 +2257,10 @@ A window of time when the company is most likely making a platform decision — 
 
 **Opportunity Type**
 The category of opportunity — e.g. new build, platform migration, redesign, DTC pivot.
-                """)
+            """)
 
-                st.markdown("#### People")
-                st.markdown("""
+            st.markdown("#### People")
+            st.markdown("""
 **Visionary**
 The executive who sets strategic direction — typically a CEO, Chief Digital Officer, or SVP Strategy. Cares about growth, market position, and competitive differentiation.
 
@@ -2253,11 +2269,11 @@ The person who owns the day-to-day platform — typically a VP Engineering, Head
 
 **Apollo Contact**
 A contact found in the Apollo database — usually a senior leader with confirmed email and LinkedIn profile.
-                """)
+            """)
 
-            with col_b:
-                st.markdown("#### Tools & AI")
-                st.markdown("""
+        with col_b:
+            st.markdown("#### Tools & AI")
+            st.markdown("""
 **Grok**
 The AI (built by xAI, the team behind X/Twitter) that reads the web to research each company. It finds recent news, job postings, press releases, and earnings calls to assess buying intent.
 
@@ -2275,10 +2291,10 @@ A search tool that finds LinkedIn intelligence and executive profiles to supplem
 
 **Cached / Cache**
 A saved result from a previous enrichment run. If a company was enriched within the last 90 days, Lead Scout uses the saved result instantly at no cost, rather than re-running the lookup.
-                """)
+            """)
 
-                st.markdown("#### Settings & Modes")
-                st.markdown("""
+            st.markdown("#### Settings & Modes")
+            st.markdown("""
 **Business Unit (BU / Region)**
 The Accedo region this lead is assigned to:
 - **NAM** — North America (US, Canada, Mexico)
@@ -2298,21 +2314,21 @@ A pre-formatted note you can copy and paste directly into Salesforce after your 
 
 **Run History**
 The last 50 runs for your region, shown in the sidebar. Click any entry to view its full results without re-running.
-                """)
+            """)
 
-        # ---- FAQ ----
-        with help_faq:
-            st.markdown("## Frequently Asked Questions")
+    # ---- FAQ ----
+    with help_faq:
+        st.markdown("## Frequently Asked Questions")
 
-            with st.expander("Why is a company scored COLD if I know they're a good fit?"):
-                st.markdown("""
+        with st.expander("Why is a company scored COLD if I know they're a good fit?"):
+            st.markdown("""
 Scores are based on **publicly available signals only**. If a company is privately negotiating, in a quiet period, or hasn't made public announcements yet, the score may be lower than your intuition suggests.
 
 You can still select and fully research COLD companies — the score is a starting point for prioritisation, not a veto. Simply check them when choosing prospects to qualify.
-                """)
+            """)
 
-            with st.expander("How long does each step take?"):
-                st.markdown("""
+        with st.expander("How long does each step take?"):
+            st.markdown("""
 | Step | Typical time |
 |---|---|
 | Building your search brief | < 30 seconds |
@@ -2322,17 +2338,17 @@ You can still select and fully research COLD companies — the score is a starti
 | Drafting outreach emails (Opus) | 1–2 minutes per company |
 
 For 3 companies across 2 verticals, expect roughly **15–25 minutes** for the full pipeline.
-                """)
+            """)
 
-            with st.expander("Does Preview Mode charge credits?"):
-                st.markdown("""
+        with st.expander("Does Preview Mode charge credits?"):
+            st.markdown("""
 **Yes, partially.** Preview Mode still runs AI research (Grok, Claude, Gemini) — so it does consume API credits. What it **doesn't** do is write results to your Google Sheet.
 
 The exception is **Company Enrichment Preview** — that only checks the cache and makes no API calls at all, so it's completely free.
-                """)
+            """)
 
-            with st.expander("Why did no companies appear after I searched?"):
-                st.markdown("""
+        with st.expander("Why did no companies appear after I searched?"):
+            st.markdown("""
 This can happen for a few reasons:
 
 1. **Signals too specific** — try selecting more signals or broadening your verticals
@@ -2341,30 +2357,30 @@ This can happen for a few reasons:
 4. **API issue** — check the System Status panel in the sidebar (all lights should be green)
 
 You can also edit the research brief directly before clicking Find Companies to make it broader or more targeted.
-                """)
+            """)
 
-            with st.expander("What's the difference between Find Companies and Enrich Companies?"):
-                st.markdown("""
+        with st.expander("What's the difference between Find Companies and Enrich Companies?"):
+            st.markdown("""
 - **Find Companies** starts from scratch — Lead Scout searches the web for companies that match your criteria. Use this for prospecting.
 - **Enrich Companies** starts from a list you already have — you provide the company names, and Lead Scout looks up contacts and signals. Use this when you know who you want to target.
-                """)
+            """)
 
-            with st.expander("What happens to companies I don't select for qualification?"):
-                st.markdown("""
+        with st.expander("What happens to companies I don't select for qualification?"):
+            st.markdown("""
 If you skip a company during the qualification step (Step 4), it's automatically archived to your **Cold Leads** tab in Google Sheets — without any contact lookup or email draft. It won't be lost, and you can still find it later if circumstances change.
-                """)
+            """)
 
-            with st.expander("What does 'cached' mean in Company Enrichment?"):
-                st.markdown("""
+        with st.expander("What does 'cached' mean in Company Enrichment?"):
+            st.markdown("""
 When Lead Scout enriches a company, it saves the results for **90 days**. If you or a colleague looks up the same company again within that window, Lead Scout uses the saved result instantly — no API calls, no cost.
 
 You can see which companies are cached before running enrichment by using the **Preview** checkbox.
-                """)
+            """)
 
-            with st.expander("Can I edit the outreach emails before using them?"):
-                st.markdown("""
+        with st.expander("Can I edit the outreach emails before using them?"):
+            st.markdown("""
 Yes. Once drafts are generated, they appear in editable text boxes inside each company's result card. You can edit directly in the browser. However, changes are not saved back to Sheets — copy the edited text before closing the tab.
-                """)
+            """)
 
 
 # ---------------------------------------------------------------------------
