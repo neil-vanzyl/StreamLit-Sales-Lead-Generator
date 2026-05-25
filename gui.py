@@ -316,26 +316,37 @@ st.markdown(
         display: none !important;
     }
 
-    /* ── Top navigation — SERGIO-style pill links ── */
-    a.topnav-link {
-        color: #808080;
-        font-size: 15px;
-        font-weight: 500;
-        padding: 5px 12px;
-        border-radius: 8px;
-        text-decoration: none !important;
-        white-space: nowrap;
-        display: inline-block;
-        transition: background 0.15s ease, color 0.15s ease;
+    /* ── Top navigation — SERGIO-style pill radio ── */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        gap: 2px !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
     }
-    a.topnav-link:hover {
-        color: #fdfdfd !important;
-        background: #1e1e1e;
-        text-decoration: none !important;
+    /* Hide the radio circle / BaseWeb mark */
+    div[data-testid="stRadio"] [data-baseweb="radio"] > div:first-child,
+    div[data-testid="stRadio"] label > div:first-child {
+        display: none !important;
     }
-    a.topnav-link.active {
-        background: rgba(0,100,255,0.15);
+    div[data-testid="stRadio"] label {
+        padding: 5px 12px !important;
+        border-radius: 8px !important;
+        cursor: pointer !important;
+        font-size: 15px !important;
+        font-weight: 500 !important;
+        color: #808080 !important;
+        white-space: nowrap !important;
+        transition: background 0.15s ease, color 0.15s ease !important;
+    }
+    div[data-testid="stRadio"] label[aria-checked="true"] {
+        background-color: rgba(0,100,255,0.15) !important;
         color: #0064FF !important;
+    }
+    div[data-testid="stRadio"] label:hover {
+        color: #FDFDFD !important;
+        background-color: #1e1e1e !important;
     }
     </style>
     """,
@@ -386,6 +397,91 @@ if not render_email_gate():
     st.stop()
 
 _request_notification_permission()
+
+# ---------------------------------------------------------------------------
+# Region preference — load once per session, prompt on first sign-in
+# ---------------------------------------------------------------------------
+
+def _ensure_bu_pref_loaded() -> bool:
+    """
+    Load the user's stored BU preference into session state.
+    Returns False only when Sheets is reachable AND confirms no record exists
+    (genuine first sign-in). Any failure falls back to True to avoid
+    repeatedly showing the setup screen.
+    """
+    if st.session_state.get("_bu_pref_loaded"):
+        return True
+    email = get_current_user()
+    if not email:
+        st.session_state["_bu_pref_loaded"] = True
+        return True
+    sc = _get_sc()
+    if sc is None:
+        # Sheets unavailable — skip setup, use default
+        st.session_state["_bu_pref_loaded"] = True
+        return True
+    try:
+        stored_bu = sc.get_user_bu(email)
+    except Exception:
+        # Sheets call failed — skip setup rather than pestering the user
+        st.session_state["_bu_pref_loaded"] = True
+        return True
+    if stored_bu and stored_bu in config.BU_OPTIONS:
+        st.session_state["selected_bu"] = stored_bu
+        st.session_state["_bu_pref_loaded"] = True
+        return True
+    if stored_bu is None:
+        # Sheets reachable, no row found — genuine first sign-in
+        return False
+    # Stored value unrecognised — skip setup
+    st.session_state["_bu_pref_loaded"] = True
+    return True
+
+
+def _render_region_setup() -> None:
+    """Full-screen region picker shown once on first sign-in."""
+    _BU_META = {
+        "NAM":  ("North America", "US, Canada & Mexico"),
+        "E&L":  ("Europe & Latin America", "EMEA and LATAM accounts"),
+        "APAC": ("Asia Pacific", "Australia, Japan, SE Asia & beyond"),
+    }
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        if _ACCEDO_LOGO_SRC:
+            st.markdown(
+                f'<div style="text-align:center;padding:32px 0 12px;">'
+                f'<img src="{_ACCEDO_LOGO_SRC}" style="height:32px;width:auto;" /></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("## Welcome to Lead Scout")
+        st.markdown(
+            "Before you get started, select your default region. "
+            "This sets which leads and history are shown to you by default. "
+            "You can change it anytime in **Settings**."
+        )
+        st.divider()
+        cols = st.columns(len(config.BU_OPTIONS))
+        for i, bu in enumerate(config.BU_OPTIONS):
+            title, subtitle = _BU_META.get(bu, (bu, ""))
+            with cols[i]:
+                if st.button(bu, key=f"_setup_bu_{bu}", use_container_width=True, type="primary"):
+                    email = get_current_user()
+                    if email:
+                        sc = _get_sc()
+                        if sc:
+                            try:
+                                sc.set_user_bu(email, bu)
+                            except Exception:
+                                pass
+                    st.session_state["selected_bu"] = bu
+                    st.session_state["_bu_pref_loaded"] = True
+                    st.rerun()
+                st.caption(f"**{title}**  \n{subtitle}")
+
+
+if not _ensure_bu_pref_loaded():
+    _render_region_setup()
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Session state helpers
@@ -1085,30 +1181,19 @@ def render_topnav() -> str:
             st.markdown("### Lead Scout")
 
     with col_nav:
-        qp = st.query_params.get("page", None)
-        last_qp = st.session_state.get("_last_nav_qp", None)
-
-        if qp and qp in _NAV_KEYS and qp != last_qp:
-            # User clicked a nav link — URL changed, sync to session state
-            st.session_state["active_page"] = qp
-
-        active_page = st.session_state.get("active_page", "find")
-        if active_page not in _NAV_KEYS:
-            active_page = "find"
-
-        # Keep URL in sync with session state (does not trigger rerun)
-        st.query_params["page"] = active_page
-        st.session_state["_last_nav_qp"] = active_page
-
-        pills = "".join(
-            f'<a href="?page={key}" class="topnav-link{" active" if key == active_page else ""}">'
-            f'{label}</a>'
-            for label, key in zip(_NAV_LABELS, _NAV_KEYS)
+        current = st.session_state.get("active_page", "find")
+        if current not in _NAV_KEYS:
+            current = "find"
+        selected = st.radio(
+            "nav",
+            options=_NAV_LABELS,
+            index=_NAV_KEYS.index(current),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="topnav_radio",
         )
-        st.markdown(
-            f'<div style="display:flex;align-items:center;gap:2px;padding-top:6px;">{pills}</div>',
-            unsafe_allow_html=True,
-        )
+        active_page = _NAV_KEYS[_NAV_LABELS.index(selected)]
+        st.session_state["active_page"] = active_page
 
     with col_user:
         current_user = get_current_user()
@@ -1204,13 +1289,22 @@ def render_settings_page() -> None:
 
     with col_b:
         st.markdown("#### Region")
+        _prev_bu = st.session_state.get("selected_bu", config.BU_DEFAULT)
         selected_bu = st.selectbox(
             "Your Region",
             options=config.BU_OPTIONS,
-            index=config.BU_OPTIONS.index(st.session_state.get("selected_bu", config.BU_DEFAULT)),
+            index=config.BU_OPTIONS.index(_prev_bu),
             help="NAM = North America (US, Canada, Mexico) · E&L = Europe & Latin America · APAC = Asia Pacific",
         )
         st.session_state["selected_bu"] = selected_bu
+        if selected_bu != _prev_bu:
+            _email = get_current_user()
+            if _email:
+                try:
+                    _get_sc().set_user_bu(_email, selected_bu)
+                    st.toast("Region saved.")
+                except Exception:
+                    pass
         st.caption(f"Active region: **{selected_bu}**")
 
     st.divider()
@@ -1704,13 +1798,14 @@ elif active_page == "find":
         st.session_state["form_version"] = st.session_state.get("form_version", 0) + 1
         st.rerun()
 
-    with st.form(f"discovery_form_{st.session_state.get('form_version', 0)}"):
+    _fv = st.session_state.get("form_version", 0)
+    with st.form(f"discovery_form_{_fv}"):
         st.caption("**What type of company are you targeting?**")
         selected_verticals = []
         v_cols = st.columns(4)
         for i, v in enumerate(VERTICALS):
             default = v in st.session_state.get("form_verticals", [])
-            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
+            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}_{_fv}"):
                 selected_verticals.append(v)
 
         st.divider()
@@ -1722,7 +1817,7 @@ elif active_page == "find":
                 options=group_signals,
                 default=[s for s in st.session_state.get("form_signals", [])
                          if s in group_signals],
-                key=f"ms_{group}",
+                key=f"ms_{group}_{_fv}",
             )
             selected_signals.extend(picked)
 
@@ -1732,7 +1827,7 @@ elif active_page == "find":
             "",
             value=st.session_state.get("form_context", ""),
             placeholder="e.g. stranded on 24i, just acquired X, mobile-only right now…",
-            key="form_context_input",
+            key=f"form_context_input_{_fv}",
             label_visibility="collapsed",
         )
 

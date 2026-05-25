@@ -210,6 +210,9 @@ GOOGLE_USAGE_TRACKER_WORKSHEET_NAME: str = os.environ.get(
 GOOGLE_ENRICHMENT_WORKSHEET_NAME: str = os.environ.get(
     "GOOGLE_ENRICHMENT_WORKSHEET_NAME", "Company Enrichment"
 )
+GOOGLE_USER_PREFS_WORKSHEET_NAME: str = os.environ.get(
+    "GOOGLE_USER_PREFS_WORKSHEET_NAME", "User Prefs"
+)
 
 # ---------------------------------------------------------------------------
 # Pipeline behaviour

@@ -45,6 +45,8 @@ ENRICHMENT_COLUMNS = [
     "Intent Topics", "Grok Signal Summary", "BU", "Status",
 ]
 
+USER_PREFS_COLUMNS = ["Email", "BU", "Updated At"]
+
 
 class SheetsClient:
     """
@@ -61,6 +63,7 @@ class SheetsClient:
         self._ws_signals: Optional[gspread.Worksheet] = None
         self._ws_usage: Optional[gspread.Worksheet] = None
         self._ws_enrichment: Optional[gspread.Worksheet] = None
+        self._ws_user_prefs: Optional[gspread.Worksheet] = None
         self._seen_domains: Set[str] = set()
         self._seen_pairs: Set[tuple] = set()
 
@@ -105,7 +108,8 @@ class SheetsClient:
         self._ws_accounts   = self._get_or_create_ws(config.GOOGLE_ACCOUNTS_WORKSHEET_NAME, config.ACCOUNTS_COLUMNS)
         self._ws_signals    = self._get_or_create_ws(config.GOOGLE_SIGNALS_WORKSHEET_NAME, config.SIGNALS_COLUMNS)
         self._ws_usage      = self._get_or_create_ws(config.GOOGLE_USAGE_TRACKER_WORKSHEET_NAME, USAGE_TRACKER_COLUMNS)
-        self._ws_enrichment = self._get_or_create_ws(config.GOOGLE_ENRICHMENT_WORKSHEET_NAME, ENRICHMENT_COLUMNS)
+        self._ws_enrichment  = self._get_or_create_ws(config.GOOGLE_ENRICHMENT_WORKSHEET_NAME, ENRICHMENT_COLUMNS)
+        self._ws_user_prefs  = self._get_or_create_ws(config.GOOGLE_USER_PREFS_WORKSHEET_NAME, USER_PREFS_COLUMNS)
 
         self._load_dedup_cache()
 
@@ -677,6 +681,42 @@ class SheetsClient:
         except Exception as exc:
             logger.warning(f"Sheets: enrichment cache lookup failed: {exc}")
             return None
+
+    # ------------------------------------------------------------------
+    # User preferences
+    # ------------------------------------------------------------------
+
+    def get_user_bu(self, email: str) -> Optional[str]:
+        """Return the stored BU for this user, or None if not set."""
+        self._connect()
+        try:
+            records = self._ws_user_prefs.get_all_records()
+            for r in records:
+                if r.get("Email", "").strip().lower() == email.strip().lower():
+                    bu = r.get("BU", "").strip()
+                    return bu if bu else None
+            return None
+        except Exception as exc:
+            logger.warning(f"Sheets: could not read user prefs for {email}: {exc}")
+            return None
+
+    def set_user_bu(self, email: str, bu: str) -> None:
+        """Upsert the BU preference for this user."""
+        self._connect()
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        email_lower = email.strip().lower()
+        try:
+            records = self._ws_user_prefs.get_all_records()
+            for i, r in enumerate(records, start=2):
+                if r.get("Email", "").strip().lower() == email_lower:
+                    self._ws_user_prefs.update(f"A{i}", [[email, bu, ts]])
+                    logger.info(f"Sheets: updated BU pref for {email} → {bu}")
+                    return
+            self._ws_user_prefs.append_row([email, bu, ts], value_input_option="RAW")
+            logger.info(f"Sheets: wrote new BU pref for {email} → {bu}")
+        except Exception as exc:
+            logger.warning(f"Sheets: could not set user pref for {email}: {exc}")
+
 
 def _strip_citation(value: str) -> str:
     import re
