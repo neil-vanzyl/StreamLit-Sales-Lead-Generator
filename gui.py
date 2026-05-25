@@ -16,6 +16,7 @@ from io import StringIO
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as _components
 
 import config
 import main
@@ -85,12 +86,49 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Browser notification helpers
+# ---------------------------------------------------------------------------
+
+def _request_notification_permission() -> None:
+    """Ask the browser for notification permission once per session."""
+    if st.session_state.get("_notif_permission_requested"):
+        return
+    _components.html(
+        "<script>"
+        "var N=window.parent&&window.parent.Notification;"
+        "if(N&&N.permission==='default'){N.requestPermission();}"
+        "</script>",
+        height=0,
+    )
+    st.session_state["_notif_permission_requested"] = True
+
+
+def _browser_notify(title: str, body: str = "") -> None:
+    """Fire a browser notification if enabled and permission has been granted."""
+    if not st.session_state.get("notifications_enabled", True):
+        return
+    t = title.replace("\\", "\\\\").replace("'", "\\'")
+    b = body.replace("\\", "\\\\").replace("'", "\\'")
+    _components.html(
+        f"<script>"
+        f"(function(){{"
+        f"var N=window.parent&&window.parent.Notification;"
+        f"if(N&&N.permission==='granted'){{new N('{t}',{{body:'{b}'}});}}"
+        f"}})();"
+        f"</script>",
+        height=0,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Email gate — must authenticate before accessing the tool
 # ---------------------------------------------------------------------------
 from utils.auth import get_current_user, render_budget_bar, render_email_gate
 
 if not render_email_gate():
     st.stop()
+
+_request_notification_permission()
 
 # ---------------------------------------------------------------------------
 # Session state helpers
@@ -797,6 +835,13 @@ with st.sidebar:
     else:
         st.success("✅ Live Mode — will write to Sheets")
 
+    st.checkbox(
+        "Browser Notifications",
+        value=True,
+        key="notifications_enabled",
+        help="Show a browser notification when search or enrichment completes.",
+    )
+
     st.divider()
     st.markdown("**Google Sheets**")
     st.caption(f"Sheet: `{config.GOOGLE_SHEET_NAME}`")
@@ -1364,6 +1409,10 @@ else:
                                 f"✅ Research complete — "
                                 f"{len(all_prospects)} prospects ready for enrichment below"
                             )
+                            _browser_notify(
+                                "Accedo Lead Scout — Research complete",
+                                f"{len(all_prospects)} prospect(s) ready for enrichment",
+                            )
                             _snapshot = st.session_state.get("grok_interim_usage")
                             if _snapshot:
                                 render_usage_panel(_snapshot)
@@ -1809,8 +1858,16 @@ else:
                             f"✅ Dry run complete — {cached_n} cached, "
                             f"{len(all_results)-cached_n} would require fresh enrichment"
                         )
+                        _browser_notify(
+                            "Accedo Lead Scout — Dry run complete",
+                            f"{cached_n} cached · {len(all_results)-cached_n} would need fresh enrichment",
+                        )
                     else:
                         st.success(f"✅ Enrichment complete — {len(all_results)} companies processed")
+                        _browser_notify(
+                            "Accedo Lead Scout — Enrichment complete",
+                            f"{len(all_results)} company/companies processed",
+                        )
 
         # ---- Results display ----
         enrich_results = st.session_state.get("enrichment_results", [])
@@ -2008,6 +2065,10 @@ else:
                         sheets_client=sc,
                     )
                     status.update(label="✅ Account intelligence complete!", state="complete", expanded=False)
+                    _browser_notify(
+                        "Accedo Lead Scout — Account intelligence complete",
+                        f"BU={bu} · results are ready",
+                    )
                 except Exception as exc:
                     status.update(label="❌ Pipeline error", state="error", expanded=True)
                     st.error(f"**Error:** {exc}")
