@@ -8,11 +8,14 @@ Two tracks:
 Both tracks respect the BU selector (NAM / E&L / APAC).
 """
 
+import base64
 import logging
 import random
 import os
 from datetime import datetime
 from io import StringIO
+
+import requests as _requests
 
 import pandas as pd
 import streamlit as st
@@ -27,6 +30,14 @@ from core.enrichment_runner import (
     run_bulk_enrichment, run_company_enrichment,
 )
 setup_logging(level=logging.INFO)
+
+# Accedo logo — encoded once at startup, reused in topnav
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "accedo-logo.png")
+try:
+    with open(_LOGO_PATH, "rb") as _f:
+        _ACCEDO_LOGO_SRC = f"data:image/png;base64,{base64.b64encode(_f.read()).decode()}"
+except Exception:
+    _ACCEDO_LOGO_SRC = None
 
 # ---------------------------------------------------------------------------
 # Shared SheetsClient — one instance per session, reused everywhere
@@ -93,7 +104,7 @@ st.set_page_config(
     page_title="Accedo Lead Scout",
     page_icon=None,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------------------------
@@ -136,11 +147,9 @@ st.markdown(
         font-weight: 500 !important;
     }
 
-    /* All buttons — consistent blue pill style */
-    .stButton > button,
+    /* Primary / form submit buttons — Accedo blue pill */
     .stFormSubmitButton > button,
-    [data-testid="stBaseButton-primary"],
-    [data-testid="stBaseButton-secondary"] {
+    [data-testid="stBaseButton-primary"] {
         background-color: #0064FF !important;
         border-color: #0064FF !important;
         color: #FDFDFD !important;
@@ -149,18 +158,35 @@ st.markdown(
         letter-spacing: 0.3px !important;
         transition: background-color 0.15s ease, border-color 0.15s ease !important;
     }
-    .stButton > button:hover,
     .stFormSubmitButton > button:hover,
-    [data-testid="stBaseButton-primary"]:hover,
-    [data-testid="stBaseButton-secondary"]:hover {
+    [data-testid="stBaseButton-primary"]:hover {
         background-color: #0050CB !important;
         border-color: #0050CB !important;
     }
-    .stButton > button:disabled,
-    .stFormSubmitButton > button:disabled {
+    .stFormSubmitButton > button:disabled,
+    [data-testid="stBaseButton-primary"]:disabled {
         background-color: rgba(0,100,255,0.35) !important;
         border-color: transparent !important;
         color: rgba(253,253,253,0.5) !important;
+    }
+
+    /* Secondary buttons — ghost style (sign-out, back, list items) */
+    [data-testid="stBaseButton-secondary"] {
+        background-color: transparent !important;
+        border-color: transparent !important;
+        color: #606060 !important;
+        border-radius: 6px !important;
+        font-size: 0.75rem !important;
+        font-weight: 400 !important;
+        letter-spacing: 0 !important;
+        padding: 2px 6px !important;
+        min-height: unset !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+    }
+    [data-testid="stBaseButton-secondary"]:hover {
+        background-color: rgba(255,255,255,0.06) !important;
+        border-color: transparent !important;
+        color: #a0a0a0 !important;
     }
 
     /* Sidebar top label */
@@ -281,6 +307,35 @@ st.markdown(
         border: 1px solid #2a2a2a !important;
         border-radius: 12px !important;
         padding: 12px 16px !important;
+    }
+
+    /* ── Hide Streamlit sidebar ── */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarNav"],
+    section[data-testid="stSidebarContent"] {
+        display: none !important;
+    }
+
+    /* ── Top navigation — SERGIO-style pill links ── */
+    a.topnav-link {
+        color: #808080;
+        font-size: 15px;
+        font-weight: 500;
+        padding: 5px 12px;
+        border-radius: 8px;
+        text-decoration: none !important;
+        white-space: nowrap;
+        display: inline-block;
+        transition: background 0.15s ease, color 0.15s ease;
+    }
+    a.topnav-link:hover {
+        color: #fdfdfd !important;
+        background: #1e1e1e;
+        text-decoration: none !important;
+    }
+    a.topnav-link.active {
+        background: rgba(0,100,255,0.15);
+        color: #0064FF !important;
     }
     </style>
     """,
@@ -812,6 +867,7 @@ def render_history_sidebar(bu_filter: str = None) -> None:
         if st.button(label, key=f"hist_{company}_{ts}", use_container_width=True):
             st.session_state["history_view"] = row
             st.session_state["view_mode"]    = "history"
+            st.session_state["active_page"]  = "history"
             st.rerun()
 
 
@@ -947,135 +1003,257 @@ def _display_results(results: list, dry: bool, query_str: str, bu: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
+
+# ---------------------------------------------------------------------------
+# Model selector widget — module-level so Settings page can call it
 # ---------------------------------------------------------------------------
 
-with st.sidebar:
-    st.markdown("## Lead Scout")
-    st.caption("Accedo · Director of Strategic Accounts")
-    st.divider()
+def _model_selectbox(role: str, label: str) -> str:
+    options = config.MODEL_OPTIONS[role]
+    labels  = [o["label"] for o in options]
+    key     = f"model_sel_{role}"
+    if key not in st.session_state:
+        st.session_state[key] = 0
+    idx = st.selectbox(
+        label,
+        options=range(len(labels)),
+        format_func=lambda i, _l=labels: _l[i],
+        index=st.session_state[key],
+        key=f"{key}_widget",
+    )
+    st.session_state[key] = idx
+    chosen = options[idx]
+    st.caption(
+        f"💬 {chosen['note']}  \n"
+        f"💰 ${chosen['input_cost']}/M in · ${chosen['output_cost']}/M out"
+    )
+    return chosen["model"]
 
-    # -----------------------------------------------------------------------
-    # Logged-in user display
-    # -----------------------------------------------------------------------
+
+def _api_status(attr: str, label: str) -> None:
+    val = getattr(config, attr, "")
+    icon = "🟢" if val else "🔴"
+    st.caption(f"{icon} {label}")
+
+
+# ---------------------------------------------------------------------------
+# Avatar helper — fetches profile picture and caches as base64 data URL.
+# Streamlit's default CSP blocks external img-src, so we proxy it server-side.
+# ---------------------------------------------------------------------------
+
+def _get_avatar_data_url(url: str) -> str | None:
+    cache_key = f"_avatar_b64_{url}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    try:
+        r = _requests.get(url, timeout=4)
+        if r.ok:
+            ct = r.headers.get("content-type", "image/jpeg").split(";")[0]
+            data_url = f"data:{ct};base64,{base64.b64encode(r.content).decode()}"
+            st.session_state[cache_key] = data_url
+            return data_url
+    except Exception:
+        pass
+    st.session_state[cache_key] = None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Top navigation bar
+# ---------------------------------------------------------------------------
+
+def render_topnav() -> str:
+    """Render horizontal nav bar. Returns active page key."""
+    from utils.auth import get_current_user, get_month_spend
+
+    _NAV_LABELS = ["Find Companies", "Enrich Companies", "Account Intelligence", "History", "Help", "Settings"]
+    _NAV_KEYS   = ["find", "enrich", "accounts", "history", "help", "settings"]
+
+    col_logo, col_nav, col_gap, col_user = st.columns([2, 6, 0.4, 3])
+
+    with col_logo:
+        if _ACCEDO_LOGO_SRC:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;padding-top:6px;">'
+                f'<img src="{_ACCEDO_LOGO_SRC}" style="height:28px;width:auto;" />'
+                f'<span style="font-size:18pt;font-weight:600;color:#FDFDFD;'
+                f'letter-spacing:0.5px;white-space:nowrap;">Lead Scout</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("### Lead Scout")
+
+    with col_nav:
+        qp = st.query_params.get("page", None)
+        last_qp = st.session_state.get("_last_nav_qp", None)
+
+        if qp and qp in _NAV_KEYS and qp != last_qp:
+            # User clicked a nav link — URL changed, sync to session state
+            st.session_state["active_page"] = qp
+
+        active_page = st.session_state.get("active_page", "find")
+        if active_page not in _NAV_KEYS:
+            active_page = "find"
+
+        # Keep URL in sync with session state (does not trigger rerun)
+        st.query_params["page"] = active_page
+        st.session_state["_last_nav_qp"] = active_page
+
+        pills = "".join(
+            f'<a href="?page={key}" class="topnav-link{" active" if key == active_page else ""}">'
+            f'{label}</a>'
+            for label, key in zip(_NAV_LABELS, _NAV_KEYS)
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:2px;padding-top:6px;">{pills}</div>',
+            unsafe_allow_html=True,
+        )
+
+    with col_user:
+        current_user = get_current_user()
+        if current_user:
+            _user_obj    = getattr(st, "user", None)
+            picture_url  = getattr(_user_obj, "picture", None)
+            display_name = getattr(_user_obj, "name", None) or current_user.split("@")[0]
+
+            # Build avatar HTML
+            avatar_src = _get_avatar_data_url(picture_url) if picture_url else None
+            if avatar_src:
+                pic_html = (
+                    f'<img src="{avatar_src}" '
+                    f'style="width:26px;height:26px;border-radius:50%;'
+                    f'object-fit:cover;flex-shrink:0;" />'
+                )
+            else:
+                initials = (display_name[0].upper() if display_name else "?")
+                pic_html = (
+                    f'<div style="width:26px;height:26px;border-radius:50%;'
+                    f'background:rgba(0,100,255,0.2);display:flex;align-items:center;'
+                    f'justify-content:center;font-size:11px;font-weight:600;'
+                    f'color:#0064FF;flex-shrink:0;">{initials}</div>'
+                )
+
+            # Budget bar values
+            budget_html = ""
+            try:
+                spent  = get_month_spend(current_user, _get_sc())
+                budget = config.DIRECTOR_BUDGET_USD
+                pct    = min(spent / budget, 1.0) if budget > 0 else 0
+                bar_color = (
+                    "#22c55e" if pct < 0.6 else
+                    "#FFB71E" if pct < 0.85 else
+                    "#FF2B62"
+                )
+                budget_html = (
+                    f'<div style="font-size:10px;color:#606060;margin-top:2px;">'
+                    f'${spent:.2f} / ${budget:.2f}</div>'
+                    f'<div style="height:3px;background:#2a2a2a;border-radius:2px;margin-top:2px;">'
+                    f'<div style="width:{pct*100:.1f}%;height:100%;'
+                    f'background:{bar_color};border-radius:2px;"></div></div>'
+                )
+            except Exception:
+                pass
+
+            # Info stack (avatar + name + budget) beside the sign-out button
+            col_info, col_logout = st.columns([5, 1])
+            with col_info:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-top:4px;">'
+                    f'{pic_html}'
+                    f'<div style="min-width:0;">'
+                    f'<div style="font-size:0.9rem;color:#FDFDFD;font-weight:500;'
+                    f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                    f'{display_name}</div>'
+                    f'{budget_html}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            with col_logout:
+                if st.button("→", key="topnav_signout", help="Sign out"):
+                    st.session_state.pop("selected_director", None)
+                    st.logout()
+
+    st.divider()
+    return active_page
+
+
+# ---------------------------------------------------------------------------
+# Settings page
+# ---------------------------------------------------------------------------
+
+def render_settings_page() -> None:
     from utils.auth import get_current_user, render_budget_bar
 
-    current_user = get_current_user()
-    if current_user:
-        st.caption(f"👤 **{current_user}**")
-        try:
-            render_budget_bar(current_user, _get_sc())
-        except Exception:
-            st.caption("Budget data unavailable")
-        if st.button("Sign out", key="sign_out_btn", use_container_width=False):
-            st.session_state.pop("selected_director", None)
-            st.logout()
-    st.divider()
+    st.subheader("Settings")
 
-    # -----------------------------------------------------------------------
-    # Model selector
-    # -----------------------------------------------------------------------
-    with st.expander("⚙️ Advanced: AI Model Selection", expanded=False):
-        st.caption("Choose which AI model powers each stage. The defaults are recommended for most runs.")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("#### Your Account")
+        current_user = get_current_user()
+        if current_user:
+            st.caption(f"Signed in as **{current_user}**")
+            st.caption("Role: Director of Strategic Accounts · Accedo")
+            st.divider()
+            st.markdown("**Monthly Budget**")
+            try:
+                render_budget_bar(current_user, _get_sc())
+            except Exception:
+                st.caption("Budget data unavailable")
 
-        def _model_selectbox(role: str, label: str) -> str:
-            options = config.MODEL_OPTIONS[role]
-            labels  = [o["label"] for o in options]
-            key     = f"model_sel_{role}"
-            if key not in st.session_state:
-                st.session_state[key] = 0
-            idx = st.selectbox(
-                label,
-                options=range(len(labels)),
-                format_func=lambda i: labels[i],
-                index=st.session_state[key],
-                key=f"{key}_widget",
-            )
-            st.session_state[key] = idx
-            chosen = options[idx]
-            st.caption(
-                f"💬 {chosen['note']}  \n"
-                f"💰 ${chosen['input_cost']}/M in · ${chosen['output_cost']}/M out"
-            )
-            return chosen["model"]
-
-        _model_selectbox("grok",       "🔬 Grok — Research")
-        st.divider()
-        _model_selectbox("gemini",     "🔍 Gemini — Discovery")
-        st.divider()
-        _model_selectbox("analyst",    "🧠 Claude — Analyst")
-        st.divider()
-        _model_selectbox("copywriter", "✉️ Claude — Copywriter")
-        st.divider()
-        st.markdown("**Exa — LinkedIn Intel**")
-        st.caption("🔒 Fixed — no model selection  \n💰 ~$0.005 per exec search")
-        st.divider()
-        st.markdown("**Apollo — Contact Enrichment**")
-        st.caption("🔒 Fixed — no model selection  \n💰 $0.49/credit (bulk enrich)")
+    with col_b:
+        st.markdown("#### Region")
+        selected_bu = st.selectbox(
+            "Your Region",
+            options=config.BU_OPTIONS,
+            index=config.BU_OPTIONS.index(st.session_state.get("selected_bu", config.BU_DEFAULT)),
+            help="NAM = North America (US, Canada, Mexico) · E&L = Europe & Latin America · APAC = Asia Pacific",
+        )
+        st.session_state["selected_bu"] = selected_bu
+        st.caption(f"Active region: **{selected_bu}**")
 
     st.divider()
-
-    # BU selector — affects both tracks
-    selected_bu = st.selectbox(
-        "Your Region",
-        options=config.BU_OPTIONS,
-        index=config.BU_OPTIONS.index(config.BU_DEFAULT),
-        help=(
-            "Select your business unit. All results from this session will be tagged with this region.\n\n"
-            "NAM = North America (US, Canada, Mexico)\n"
-            "E&L = Europe & Latin America\n"
-            "APAC = Asia Pacific"
-        ),
-    )
-    st.session_state["selected_bu"] = selected_bu
-    st.caption(f"Active region: **{selected_bu}**")
-
-    st.divider()
-
-    is_dry_run = st.checkbox(
-        "Preview Mode",
-        value=False,
-        help=(
-            "When turned on, Lead Scout runs all research and scoring but does NOT save anything "
-            "to your Google Sheet. Use this to preview results before committing to a full run.\n\n"
-            "Note: AI research still runs (and uses credits) in Preview Mode — only the save step is skipped."
-        ),
-    )
-    if is_dry_run:
-        st.warning("👁️ Preview Mode — results will not be saved to Sheets")
-    else:
-        st.success("✅ Live Mode — results will be saved to Sheets")
-
+    st.markdown("#### Notifications")
     st.checkbox(
         "Browser Notifications",
         value=True,
         key="notifications_enabled",
-        help=(
-            "Show a desktop notification when a long-running step (search or enrichment) finishes. "
-            "Useful when you switch to another tab while waiting. "
-            "Your browser will ask permission the first time."
-        ),
+        help="Show a desktop notification when a long-running step finishes. Useful when you switch to another tab while waiting.",
     )
 
     st.divider()
+    st.markdown("#### AI Model Configuration")
+    st.caption("Choose which AI model powers each stage. The defaults are recommended for most runs.")
+    with st.expander("Customize AI Models", expanded=False):
+        _model_selectbox("grok",       "Grok — Research")
+        st.divider()
+        _model_selectbox("gemini",     "Gemini — Discovery")
+        st.divider()
+        _model_selectbox("analyst",    "Claude — Analyst")
+        st.divider()
+        _model_selectbox("copywriter", "Claude — Copywriter")
+        st.divider()
+        st.markdown("**Exa — LinkedIn Intel**")
+        st.caption("Fixed — no model selection  \n~$0.005 per exec search")
+        st.divider()
+        st.markdown("**Apollo — Contact Enrichment**")
+        st.caption("Fixed — no model selection  \n$0.49/credit (bulk enrich)")
 
+    st.divider()
+    st.markdown("#### Google Sheet")
     _sheet_url = _get_sheet_url()
     if _sheet_url:
-        st.markdown(f"**[📊 Open Google Sheet ↗]({_sheet_url})**")
+        st.markdown(f"**[Open Google Sheet ↗]({_sheet_url})**")
     else:
-        st.markdown(f"**📊 Google Sheet:** `{config.GOOGLE_SHEET_NAME}`")
+        st.markdown(f"**Sheet:** `{config.GOOGLE_SHEET_NAME}`")
     st.caption(f"Hot leads tab: *{config.GOOGLE_WORKSHEET_NAME}*")
     st.caption(f"Cold leads tab: *{config.GOOGLE_COLD_WORKSHEET_NAME}*")
 
     st.divider()
-
-    def _api_status(attr: str, label: str) -> None:
-        val = getattr(config, attr, "")
-        icon = "🟢" if val else "🔴"
-        st.caption(f"{icon} {label}")
-
-    with st.expander("🔧 System Status", expanded=False):
-        st.caption("Green = connected and ready. Red = key missing — contact your administrator.")
+    st.markdown("#### System Status")
+    st.caption("Green = connected and ready. Red = key missing — contact your administrator.")
+    with st.expander("API Status", expanded=True):
         _api_status("XAI_API_KEY",           "Grok (web research)")
         _api_status("ANTHROPIC_API_KEY",     "Claude (scoring & outreach)")
         _api_status("EXA_API_KEY",           "Exa (LinkedIn intel)")
@@ -1083,25 +1261,28 @@ with st.sidebar:
         _api_status("APOLLO_API_KEY",        "Apollo (contact enrichment)")
         _api_status("GEMINI_API_KEY",        "Gemini (discovery)")
 
-    st.divider()
-    if st.button("Help & Reference", use_container_width=True, key="help_btn"):
-        st.session_state["view_mode"] = "help"
-        st.rerun()
 
-    st.divider()
-    st.markdown(f"**Run History** · BU={selected_bu}")
-    render_history_sidebar(bu_filter=selected_bu)
+# ---------------------------------------------------------------------------
+# History page
+# ---------------------------------------------------------------------------
 
-    st.divider()
-    st.markdown("**Usage History**")
-    with st.expander("📊 Historical Cost Log", expanded=False):
+def render_history_page() -> None:
+    st.subheader("History")
+    bu = st.session_state.get("selected_bu", config.BU_DEFAULT)
+    tab_runs, tab_usage = st.tabs(["Run History", "Usage Cost Log"])
+
+    with tab_runs:
+        st.caption(f"Recent runs · BU={bu}")
+        render_history_sidebar(bu_filter=bu)
+
+    with tab_usage:
         try:
-            history = load_usage_history(max_runs=10)
+            history = load_usage_history(max_runs=20)
             if history:
                 rows = [
                     {
                         "Date":       h.get("timestamp", "")[:16],
-                        "Query":      h.get("query", "")[:30],
+                        "Query":      h.get("query", "")[:40],
                         "Prospects":  h.get("prospects", 0),
                         "Total $":    f"{h.get('total_cost_usd', 0):.4f}",
                         "$/prospect": f"{h.get('cost_per_prospect', 0):.4f}",
@@ -1119,12 +1300,6 @@ with st.sidebar:
 # Main content
 # ---------------------------------------------------------------------------
 
-st.title("Accedo Lead Scout")
-st.caption(
-    f"Find and qualify OTT/CTV sales prospects · Region: **{st.session_state.get('selected_bu', config.BU_DEFAULT)}**"
-)
-
-bu = st.session_state.get("selected_bu", config.BU_DEFAULT)
 
 
 # ---------------------------------------------------------------------------
@@ -1143,14 +1318,6 @@ def _apply_model_overrides() -> None:
         if options and idx < len(options):
             setattr(config, attr, options[idx]["model"])
 
-
-# ---------------------------------------------------------------------------
-# View mode handler (history card)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Help page (rendered via sidebar button, not a tab)
-# ---------------------------------------------------------------------------
 
 def _render_help() -> None:
     st.subheader("Help & Reference")
@@ -1400,7 +1567,18 @@ Yes. Once drafts are generated, they appear in editable text boxes inside each c
 
 # ---------------------------------------------------------------------------
 
-def _handle_view_mode() -> bool:
+
+# ---------------------------------------------------------------------------
+# Main routing — top nav
+# ---------------------------------------------------------------------------
+
+active_page = render_topnav()
+bu = st.session_state.get("selected_bu", config.BU_DEFAULT)
+
+if active_page == "help":
+    _render_help()
+
+elif active_page == "history":
     if st.session_state.get("view_mode") == "history":
         row = st.session_state.get("history_view", {})
         if row:
@@ -1416,1163 +1594,1160 @@ def _handle_view_mode() -> bool:
                 )
             st.divider()
             render_history_card(row)
-            return True
+    else:
+        render_history_page()
 
-    if st.session_state.get("view_mode") == "help":
-        if st.button("← Back"):
-            st.session_state["view_mode"] = "run"
-            st.rerun()
+elif active_page == "settings":
+    render_settings_page()
+
+elif active_page == "find":
+    _run_mode = st.selectbox(
+        "Run Mode",
+        options=["Live — save results to Google Sheet", "Preview — research only, no save"],
+        index=1 if st.session_state.get("is_dry_run", False) else 0,
+        key="dry_run_select_find",
+        help="Live mode saves all results. Preview runs all AI research but skips the save step (still uses credits).",
+    )
+    is_dry_run = _run_mode.startswith("Preview")
+    st.session_state["is_dry_run"] = is_dry_run
+    if is_dry_run:
+        st.warning("Preview Mode — results will not be saved to your Google Sheet")
+
+
+    from prompts.gemini_scorer import RANDOM_CONFIGS
+
+    VERTICALS = [
+        "Sports", "News", "Entertainment", "Faith", "Fitness",
+        "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Micro-drama", "FAST", "Other",
+    ]
+
+    SIGNALS = {
+        "Platform & Technology": [
+            "First CTV build",
+            "CTV ambition",
+            "Smart TV app launch",
+            "Mobile-only",
+            "Youtube transition to OTT",
+            "Web apps looking for native",
+            "Platform migration",
+            "Stranded vendor customer",
+            "Video player overhaul",
+            "App store complaints",
+            "SSAI/DRM change",
+        ],
+        "Product & Design": [
+            "App redesign",
+            "Platform consolidation",
+            "New product/UX leadership",
+            "Rebrand with digital implications",
+        ],
+        "Hiring": [
+            "Hiring: OTT/CTV engineers",
+            "Hiring: Front-end engineers",
+            "Hiring: QA automation",
+            "Hiring: UX/UI designers",
+            "Hiring: Product managers",
+            "Hiring: TPMs / delivery leads",
+        ],
+        "Commercial & Growth": [
+            "Rights without platform",
+            "FAST/AVOD launch",
+            "Funding round",
+            "Market expansion",
+            "New streaming partnership",
+            "DTC pivot",
+            "M&A / platform unification",
+            "Social-first publisher going owned OTT",
+            "Gaming company entering video",
+            "Post-acquisition integration",
+        ],
+        "Risk & Distress (whats affecting them)": [
+            "RFP activity",
+            "Leadership change in digital/streaming",
+            "Competitor launched on CTV first",
+        ],
+    }
+
+    # ----------------------------------------------------------------
+    # STAGE A — Intake form (st.form prevents per-widget reruns)
+    # ----------------------------------------------------------------
+    st.markdown("#### Step 1 — Tell Lead Scout what you're looking for")
+    st.caption("Select the type of company and what buying signals you want to target. Lead Scout will search the web and find matching prospects.")
+    if st.button("Randomize Query Selection", key="randomize_btn", type="primary",
+                 help="Auto-fill with a random discovery scenario"):
+        import random as _random
+        cfg = _random.choice(RANDOM_CONFIGS)
+
+        st.session_state["form_verticals"] = cfg["verticals"]
+        st.session_state["form_signals"]   = cfg["signals"]
+        st.session_state["form_context"]   = cfg["context"]
+
+        _bu_label = {
+            "NAM": "North America (US, Canada, Mexico)",
+            "E&L": "Europe or Latin America",
+            "APAC": "Asia Pacific",
+        }.get(bu, bu)
+        _new_brief = (
+            f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(cfg['verticals'])} companies "
+            f"headquartered in {_bu_label} "
+            f"showing these OTT buying signals: {', '.join(cfg['signals'])}."
+        )
+        if cfg.get("context"):
+            _new_brief += f"\n\nAdditional context: {cfg['context']}"
+        st.session_state["brief_text_area"]     = _new_brief
+        st.session_state["last_selection_hash"] = None
+        st.session_state["brief_used_gemini"]   = False
+
+        for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
+            st.session_state.pop(key, None)
+        # Bump form_version so the form re-mounts fresh with the new defaults
+        st.session_state["form_version"] = st.session_state.get("form_version", 0) + 1
+        st.rerun()
+
+    with st.form(f"discovery_form_{st.session_state.get('form_version', 0)}"):
+        st.caption("**What type of company are you targeting?**")
+        selected_verticals = []
+        v_cols = st.columns(4)
+        for i, v in enumerate(VERTICALS):
+            default = v in st.session_state.get("form_verticals", [])
+            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
+                selected_verticals.append(v)
+
         st.divider()
-        _render_help()
-        return True
-
-    return False
-
-
-if _handle_view_mode():
-    pass
-
-else:
-    # ---------------------------------------------------------------------------
-    # Two-track tabs
-    # ---------------------------------------------------------------------------
-    tab_discovery, tab_enrichment, tab_accounts = st.tabs([
-        "Find Companies", "Enrich Companies", "Account Intelligence"
-    ])
-
-    # -----------------------------------------------------------------------
-    # DISCOVERY TAB
-    # -----------------------------------------------------------------------
-    with tab_discovery:
-
-        from prompts.gemini_scorer import RANDOM_CONFIGS
-
-        VERTICALS = [
-            "Sports", "News", "Entertainment", "Faith", "Fitness",
-            "Education", "Audio", "In-Vehicle", "Pay TV", "Multi-Vertical", "Micro-drama", "FAST", "Other",
-        ]
-
-        SIGNALS = {
-            "Platform & Technology": [
-                "First CTV build",
-                "CTV ambition",
-                "Smart TV app launch",
-                "Mobile-only",
-                "Youtube transition to OTT",
-                "Web apps looking for native",
-                "Platform migration",
-                "Stranded vendor customer",
-                "Video player overhaul",
-                "App store complaints",
-                "SSAI/DRM change",
-            ],
-            "Product & Design": [
-                "App redesign",
-                "Platform consolidation",
-                "New product/UX leadership",
-                "Rebrand with digital implications",
-            ],
-            "Hiring": [
-                "Hiring: OTT/CTV engineers",
-                "Hiring: Front-end engineers",
-                "Hiring: QA automation",
-                "Hiring: UX/UI designers",
-                "Hiring: Product managers",
-                "Hiring: TPMs / delivery leads",
-            ],
-            "Commercial & Growth": [
-                "Rights without platform",
-                "FAST/AVOD launch",
-                "Funding round",
-                "Market expansion",
-                "New streaming partnership",
-                "DTC pivot",
-                "M&A / platform unification",
-                "Social-first publisher going owned OTT",
-                "Gaming company entering video",
-                "Post-acquisition integration",
-            ],
-            "Risk & Distress (whats affecting them)": [
-                "RFP activity",
-                "Leadership change in digital/streaming",
-                "Competitor launched on CTV first",
-            ],
-        }
-
-        # ----------------------------------------------------------------
-        # STAGE A — Intake form (st.form prevents per-widget reruns)
-        # ----------------------------------------------------------------
-        col_title, col_rand = st.columns([5, 1])
-        with col_title:
-            st.markdown("#### Step 1 — Tell Lead Scout what you're looking for")
-            st.caption("Select the type of company and what buying signals you want to target. Lead Scout will search the web and find matching prospects.")
-        with col_rand:
-            if st.button("Randomize", key="randomize_btn",
-                         use_container_width=True,
-                         help="Auto-fill with a random discovery scenario"):
-                import random as _random
-                cfg = _random.choice(RANDOM_CONFIGS)
-
-                st.session_state["form_verticals"] = cfg["verticals"]
-                st.session_state["form_signals"]   = cfg["signals"]
-                st.session_state["form_context"]   = cfg["context"]
-
-                _bu_label = {
-                    "NAM": "North America (US, Canada, Mexico)",
-                    "E&L": "Europe or Latin America",
-                    "APAC": "Asia Pacific",
-                }.get(bu, bu)
-                _new_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(cfg['verticals'])} companies "
-                    f"headquartered in {_bu_label} "
-                    f"showing these OTT buying signals: {', '.join(cfg['signals'])}."
-                )
-                if cfg.get("context"):
-                    _new_brief += f"\n\nAdditional context: {cfg['context']}"
-                st.session_state["brief_text_area"]     = _new_brief
-                st.session_state["last_selection_hash"] = None
-                st.session_state["brief_used_gemini"]   = False
-
-                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
-                    st.session_state.pop(key, None)
-                st.rerun()
-
-        with st.form("discovery_form"):
-            st.caption("**What type of company are you targeting?**")
-            selected_verticals = []
-            v_cols = st.columns(4)
-            for i, v in enumerate(VERTICALS):
-                default = v in st.session_state.get("form_verticals", [])
-                if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
-                    selected_verticals.append(v)
-
-            st.divider()
-            st.caption("**What buying signals are you looking for?**")
-            selected_signals = []
-            for group, group_signals in SIGNALS.items():
-                picked = st.multiselect(
-                    group,
-                    options=group_signals,
-                    default=[s for s in st.session_state.get("form_signals", [])
-                             if s in group_signals],
-                    key=f"ms_{group}",
-                )
-                selected_signals.extend(picked)
-
-            st.divider()
-            st.caption("**Anything specific to focus on?** *(optional — add context like a specific competitor, technology, or timeline)*")
-            context_val = st.text_input(
-                "",
-                value=st.session_state.get("form_context", ""),
-                placeholder="e.g. stranded on 24i, just acquired X, mobile-only right now…",
-                key="form_context_input",
-                label_visibility="collapsed",
+        st.caption("**What buying signals are you looking for?**")
+        selected_signals = []
+        for group, group_signals in SIGNALS.items():
+            picked = st.multiselect(
+                group,
+                options=group_signals,
+                default=[s for s in st.session_state.get("form_signals", [])
+                         if s in group_signals],
+                key=f"ms_{group}",
             )
+            selected_signals.extend(picked)
 
-            form_submitted = st.form_submit_button(
-                "Build My Search",
-                use_container_width=True,
-            )
-
-        # Process form submission — runs once when rep clicks Build Brief
-        if form_submitted:
-            if not selected_verticals or not selected_signals:
-                st.warning("Select at least one vertical and one signal.")
-            else:
-                st.session_state["form_verticals"] = selected_verticals
-                st.session_state["form_signals"]   = selected_signals
-                st.session_state["form_context"]   = context_val
-
-                bu_label = {
-                    "NAM":  "North America (US, Canada, Mexico)",
-                    "E&L":  "Europe or Latin America",
-                    "APAC": "Asia Pacific",
-                }.get(bu, bu)
-
-                auto_brief = (
-                    f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(selected_verticals)} companies "
-                    f"headquartered in {bu_label} "
-                    f"showing these OTT buying signals: {', '.join(selected_signals)}."
-                )
-                if context_val.strip():
-                    auto_brief += f"\n\nAdditional context: {context_val.strip()}"
-
-                # Enrich with Gemini — fast call, falls back silently if it fails
-                final_brief = auto_brief
-                used_gemini = False
-
-                # Create RunUsage now so Gemini tokens are tracked from the start
-                from utils.usage_tracker import RunUsage as _RunUsage
-                _brief_usage = _RunUsage(", ".join(selected_verticals))
-                _brief_usage.start_prospect("_brief_enrichment")
-
-                try:
-                    _gemini_key = (st.secrets.get("GEMINI_API_KEY", "") or
-                                   config.GEMINI_API_KEY or
-                                   os.environ.get("GEMINI_API_KEY", ""))
-                except Exception:
-                    _gemini_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
-
-                if _gemini_key:
-                    try:
-                        from tools.gemini import enrich_brief
-                        enrichment = enrich_brief(
-                            auto_brief=auto_brief,
-                            verticals=selected_verticals,
-                            signals=selected_signals,
-                            bu=bu,
-                            usage_tracker=_brief_usage,
-                        )
-                        final_brief = enrichment.get("enriched_brief", auto_brief)
-                        used_gemini = enrichment.get("used_gemini", False)
-                    except Exception as _e:
-                        st.warning(f"Gemini enrichment debug: {_e}")
-
-                _brief_usage.end_prospect()
-                st.session_state["brief_run_usage"] = _brief_usage
-
-                st.session_state["brief_text_area"]     = final_brief
-                st.session_state["brief_used_gemini"]   = used_gemini
-                st.session_state["last_selection_hash"] = hash((
-                    tuple(sorted(selected_verticals)),
-                    tuple(sorted(selected_signals)),
-                    context_val.strip(), bu,
-                ))
-                for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
-                    st.session_state.pop(key, None)
-
-        # ----------------------------------------------------------------
-        # STAGE B — Brief display + Find Companies (shown after form submit)
-        # ----------------------------------------------------------------
-        if st.session_state.get("brief_text_area"):
-            st.divider()
-            used_gemini = st.session_state.get("brief_used_gemini", False)
-            st.caption(
-                "**Step 2 — Review your search** — you can edit this before searching"
-                + (" · refined by Gemini" if used_gemini else "")
-            )
-
-            edited_brief = st.text_area(
-                "",
-                value=st.session_state.get("brief_text_area", ""),
-                height=160,
-                key="brief_text_area",
-                label_visibility="collapsed",
-            )
-
-            sweep_btn = st.button(
-                "Find Companies",
-                use_container_width=True,
-                type="primary",
-                key="sweep_btn",
-                disabled=not edited_brief.strip(),
-            )
-
-            # ---- Discovery sweep ----
-            if sweep_btn:
-                _apply_model_overrides()
-                for key in ["sweep_result", "company_selections",
-                            "grok_prospects", "enrichment_selections"]:
-                    st.session_state.pop(key, None)
-
-                st.info("Grok is scanning the web — this takes 60–90 seconds per vertical…")
-                with st.status(
-                    "Searching for companies…", expanded=True
-                ) as status:
-                    selected_verticals_for_sweep = st.session_state.get("form_verticals", [])
-                    total_verticals = len(selected_verticals_for_sweep) or 1
-
-                    if total_verticals > 1:
-                        st.write(f"Running {total_verticals} vertical sweeps in sequence…")
-
-                    v_placeholders = {}
-                    for v in selected_verticals_for_sweep:
-                        v_placeholders[v] = st.empty()
-                        v_placeholders[v].markdown(f"**{v}** · queued")
-
-                    def _on_v_start(vertical, idx, total):
-                        if vertical in v_placeholders:
-                            v_placeholders[vertical].markdown(
-                                f"**{vertical}** · searching… *({idx}/{total})*"
-                            )
-
-                    def _on_v_done(vertical, companies, idx, total):
-                        if vertical in v_placeholders:
-                            v_placeholders[vertical].markdown(
-                                f"**{vertical}** · {len(companies)} found"
-                            )
-
-                    try:
-                        sweep = main.run_discovery_sweep(
-                            edited_brief,
-                            bu=bu,
-                            signals=st.session_state.get("form_signals", []),
-                            verticals=selected_verticals_for_sweep,
-                            director=get_current_user() or "",
-                            usage=st.session_state.get("brief_run_usage"),
-                            on_vertical_start=_on_v_start,
-                            on_vertical_done=_on_v_done,
-                        )
-                        st.session_state["sweep_result"]  = sweep
-                        st.session_state["sweep_brief"]   = edited_brief
-                        st.session_state["sweep_usage"]   = sweep.get("usage")
-                        st.session_state["sweep_sheets"]  = sweep.get("sheets")
-                        companies = sweep.get("companies", [])
-                        status.update(
-                            label=f"Found {len(companies)} companies — select which to research below",
-                            state="complete", expanded=True,
-                        )
-                        _sweep_u = sweep.get("usage")
-                        if _sweep_u:
-                            try:
-                                _sweep_u.finish()
-                                st.session_state["sweep_usage_summary"] = _sweep_u.summary()
-                            except Exception:
-                                pass
-                    except Exception as exc:
-                        status.update(label="Error", state="error", expanded=True)
-                        st.error(f"**Error:** {exc}")
-                        st.exception(exc)
-
-                # Render sweep cost outside the collapsible status block
-                if st.session_state.get("sweep_usage_summary"):
-                    render_usage_panel(st.session_state["sweep_usage_summary"])
-
-        # ----------------------------------------------------------------
-        # STAGE C — Company selection
-        # ----------------------------------------------------------------
-        sweep_result = st.session_state.get("sweep_result")
-
-        if sweep_result:
-            companies = sweep_result.get("companies", [])
-            search_summary = sweep_result.get("search_summary", "")
-
-            if not companies:
-                st.warning(
-                    "No companies found. Try adjusting your brief "
-                    "or selecting different signals."
-                )
-            else:
-                st.divider()
-                st.subheader(f"{len(companies)} companies found")
-                if search_summary:
-                    st.caption(search_summary)
-                st.caption(
-                    "**Step 3 — Pick which companies to research.** "
-                    "Select up to 5. Lead Scout will read the web for each one and score its opportunity — "
-                    "results appear as each finishes."
-                )
-
-                # Initialise selections — all unchecked by default
-                if "company_selections" not in st.session_state:
-                    st.session_state["company_selections"] = {
-                        c.get("name", ""): False for c in companies
-                    }
-
-                with st.form("company_selection_form"):
-                    for company in companies:
-                        name        = company.get("name", "")
-                        evidence    = company.get("evidence", "")
-                        signal_type = company.get("signal_type", "")
-                        source_url  = company.get("source_url", "")
-                        hq          = company.get("hq_country", "")
-
-                        col_check, col_info = st.columns([1, 10])
-                        with col_check:
-                            current = st.session_state["company_selections"].get(name, False)
-                            checked = st.checkbox(
-                                "", value=current,
-                                key=f"sel_{name}",
-                                label_visibility="collapsed",
-                            )
-                        with col_info:
-                            name_md = f"[{name}]({source_url})" if source_url else name
-                            meta    = f" · {hq}" if hq else ""
-                            badge   = f"`{signal_type}`" if signal_type else ""
-                            st.markdown(f"**{name_md}**{meta}  {badge}")
-                            if evidence:
-                                st.caption(evidence)
-
-                    research_submitted = st.form_submit_button(
-                        "Research Selected Companies",
-                        use_container_width=True,
-                        type="primary",
-                    )
-
-                # Process selections after form submit
-                if research_submitted:
-                    # Collect checked companies from form widget state
-                    selected_companies = [
-                        c for c in companies
-                        if st.session_state.get(f"sel_{c.get('name', '')}", False)
-                    ]
-                    # Update company_selections session state
-                    for c in companies:
-                        n = c.get("name", "")
-                        st.session_state["company_selections"][n] = st.session_state.get(f"sel_{n}", False)
-
-                    selected_count = len(selected_companies)
-                    if selected_count == 0:
-                        st.warning("Select at least one company above.")
-                    else:
-                        st.caption(f"{selected_count} selected for deep research")
-                        _apply_model_overrides()
-                        st.session_state.pop("grok_prospects", None)
-                        st.session_state.pop("enrichment_selections", None)
-
-                        total  = selected_count
-                        brief  = st.session_state.get("sweep_brief", "")
-                        run_id = sweep_result.get("run_id", "")
-
-                        st.divider()
-                        st.subheader(f"Researching {total} {'company' if total == 1 else 'companies'}…")
-
-                        placeholders = {}
-                        for company in selected_companies:
-                            name = company.get("name", "")
-                            placeholders[name] = st.empty()
-                            placeholders[name].markdown(f"**{name}** · queued")
-
-                        completed_prospects = []
-
-                        def _on_start(name, idx, total):
-                            placeholders[name].markdown(
-                                f"**{name}** · researching… *({idx}/{total})*"
-                            )
-
-                        def _on_done(name, prospect, idx, total):
-                            score   = prospect.get("opportunity_score") or 0
-                            verdict = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
-                            opp     = prospect.get("opportunity_type", "")
-                            err     = prospect.get("error")
-                            if err:
-                                placeholders[name].markdown(f"**{name}** · research failed — {err}")
-                            else:
-                                placeholders[name].markdown(
-                                    f"**{name}** · **{score}** · {verdict}"
-                                    + (f" · *{opp}*" if opp else "")
-                                )
-                            completed_prospects.append(prospect)
-
-                        try:
-                            _sweep_usage  = st.session_state.get("sweep_usage")
-                            _sweep_sheets = st.session_state.get("sweep_sheets")
-
-                            with st.spinner("Grok deep research running — 2–4 minutes per company…"):
-                                grok_result = main.run_grok_only(
-                                    query=brief,
-                                    bu=bu,
-                                    selected_companies=selected_companies,
-                                    run_id=run_id,
-                                    on_company_start=_on_start,
-                                    on_company_done=_on_done,
-                                    usage=_sweep_usage,
-                                    sheets=_sweep_sheets,
-                                )
-
-                            all_prospects = grok_result.get("prospects", [])
-                            st.session_state["grok_prospects"]  = all_prospects
-                            st.session_state["grok_run_id"]     = run_id
-                            st.session_state["grok_query"]      = brief
-                            st.session_state["grok_usage"]      = grok_result.get("usage")
-                            st.session_state["grok_sheets"]     = grok_result.get("sheets")
-                            st.session_state["grok_discovery"]  = {
-                                "discovery_ran": True,
-                                "gemini_ran":    True,
-                                "all_found":     [],
-                                "selected":      [],
-                                "rejected":      [],
-                                "search_strings": [],
-                            }
-
-                            _interim_usage = grok_result.get("usage")
-                            if _interim_usage:
-                                _interim_snapshot = _interim_usage.summary()
-                                st.session_state["grok_interim_usage"] = _interim_snapshot
-
-                            st.success(
-                                f"Research complete — "
-                                f"{len(all_prospects)} prospects ready for enrichment below"
-                            )
-                            _browser_notify(
-                                "Accedo Lead Scout — Research complete",
-                                f"{len(all_prospects)} prospect(s) ready for enrichment",
-                            )
-                            _snapshot = st.session_state.get("grok_interim_usage")
-                            if _snapshot:
-                                render_usage_panel(_snapshot)
-
-                        except Exception as exc:
-                            st.error(f"**Research error:** {exc}")
-                            st.exception(exc)
-
-        # ----------------------------------------------------------------
-        # ----------------------------------------------------------------
-        # STAGE E — Enrichment selection (Apollo + Exa + Sonnet)
-        # ----------------------------------------------------------------
-        grok_prospects = st.session_state.get("grok_prospects", [])
-
-        if grok_prospects:
-            st.divider()
-            st.subheader("Step 4 — Choose which prospects to qualify fully")
-            st.caption(
-                "HOT and WARM prospects are pre-checked. "
-                "Qualifying a prospect looks up their key decision makers (via Apollo & LinkedIn), "
-                "then scores them with Claude. "
-                "Companies you don't select are archived to your Cold Leads tab without any contact lookup."
-            )
-
-            if "enrichment_selections" not in st.session_state:
-                st.session_state["enrichment_selections"] = {
-                    p.get("name", ""): (p.get("opportunity_score") or 0) >= 50
-                    for p in grok_prospects
-                }
-
-            with st.form("enrichment_selection_form"):
-                for prospect in grok_prospects:
-                    name     = prospect.get("name", "")
-                    score    = prospect.get("opportunity_score") or 0
-                    verdict  = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
-                    opp_type = prospect.get("opportunity_type", "")
-                    gap      = prospect.get("transition_gap_timer", "")
-
-                    col_check, col_score, col_info = st.columns([1, 2, 8])
-                    with col_check:
-                        current = st.session_state["enrichment_selections"].get(name, False)
-                        st.checkbox(
-                            "", value=current,
-                            key=f"enrich_{name}",
-                            label_visibility="collapsed",
-                        )
-                    with col_score:
-                        st.markdown(_score_bar_html(score), unsafe_allow_html=True)
-                        st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
-                    with col_info:
-                        detail = f"*{opp_type}*" if opp_type else ""
-                        if gap:
-                            detail += f" · {gap}"
-                        st.markdown(
-                            f"**{name}**  \n{detail}" if detail else f"**{name}**"
-                        )
-
-                enrich_submitted = st.form_submit_button(
-                    "Qualify Selected",
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if enrich_submitted:
-                enrichment_names = {
-                    p.get("name", "") for p in grok_prospects
-                    if st.session_state.get(f"enrich_{p.get('name', '')}", False)
-                }
-                for p in grok_prospects:
-                    n = p.get("name", "")
-                    st.session_state["enrichment_selections"][n] = n in enrichment_names
-
-                enrichment_count = len(enrichment_names)
-                if enrichment_count == 0:
-                    st.warning("⬆️ Select at least one company above.")
-                else:
-                    _apply_model_overrides()
-                    _grok_usage  = st.session_state.get("grok_usage")
-                    _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
-                    query        = st.session_state.get("grok_query", "")
-                    run_id       = st.session_state.get("grok_run_id", "")
-
-                    qualified_results = []
-                    unselected_names  = {
-                        p.get("name", "") for p in grok_prospects
-                        if p.get("name", "") not in enrichment_names
-                    }
-
-                    # Archive unselected immediately
-                    for prospect in grok_prospects:
-                        name = prospect.get("name", "")
-                        if name in unselected_names and not is_dry_run:
-                            try:
-                                stub_analyst = {
-                                    "refined_score": prospect.get("opportunity_score", 0),
-                                    "verdict": "COLD",
-                                    "write_to_sheet": False,
-                                    "skip_reason": "Not selected for qualification by user",
-                                    "top_entry_point": "",
-                                    "score_delta_reasoning": "Archived by user",
-                                    "copywriter_brief": "",
-                                    "transition_gap_confirmed": "",
-                                    "key_risk_if_no_action": "",
-                                }
-                                stub_emails = {
-                                    "visionary_email": {"subject_line": f"{name} — archived", "body": "Not selected for qualification."},
-                                    "operator_email": {"subject_line": "", "body": ""},
-                                }
-                                _grok_sheets.append_lead(
-                                    prospect, stub_analyst, stub_emails,
-                                    contact=None, query=query,
-                                    is_cold=True, bu=bu,
-                                )
-                            except Exception:
-                                pass
-
-                    # Qualify selected companies
-                    placeholders = {
-                        p.get("name", ""): st.empty()
-                        for p in grok_prospects
-                        if p.get("name", "") in enrichment_names
-                    }
-                    for name in enrichment_names:
-                        placeholders[name].markdown(f"**{name}** · queued")
-
-                    st.info("Running Apollo → Exa → Sonnet qualification…")
-
-                    for prospect in grok_prospects:
-                        name = prospect.get("name", "")
-                        if name not in enrichment_names:
-                            continue
-                        placeholders[name].markdown(f"**{name}** · qualifying…")
-                        try:
-                            result = main.qualify_prospect_only(
-                                prospect=prospect,
-                                sheets=_grok_sheets,
-                                query=query,
-                                run_id=run_id,
-                                dry_run=is_dry_run,
-                                usage=_grok_usage,
-                                bu=bu,
-                            )
-                            score   = result.get("refined_score") or 0
-                            verdict = result.get("verdict", "COLD")
-                            v_icon  = "" if verdict == "HOT" else "" if verdict == "WARM" else ""
-                            entry   = result.get("analyst", {}).get("top_entry_point", "")[:60]
-                            placeholders[name].markdown(
-                                f"**{name}** · **{score}** · {verdict}"
-                                + (f"  \n*{entry}*" if entry else "")
-                            )
-                            qualified_results.append(result)
-                        except Exception as exc:
-                            placeholders[name].markdown(f"**{name}** · error: {exc}")
-
-                    st.session_state["qualified_results"] = qualified_results
-                    st.session_state["qualify_run_id"]    = run_id
-                    st.session_state["qualify_sheets"]    = _grok_sheets
-                    st.session_state["qualify_usage"]     = _grok_usage
-
-        # ----------------------------------------------------------------
-        # STAGE F — Outreach selection (Opus)
-        # ----------------------------------------------------------------
-        qualified_results = st.session_state.get("qualified_results", [])
-        hot_warm = [r for r in qualified_results if r.get("verdict") in ("HOT", "WARM")]
-
-        if qualified_results:
-            st.divider()
-            st.subheader("Step 5 — Choose who gets a personalised email draft")
-            st.caption(
-                "Lead Scout will write personalised outreach emails for each prospect you select here — "
-                "one for the strategic decision maker and one for the technical owner. "
-                "Prospects you skip will still be saved to Sheets, just without email drafts."
-            )
-
-            if "outreach_selections" not in st.session_state:
-                st.session_state["outreach_selections"] = {
-                    r.get("company", ""): r.get("verdict") in ("HOT", "WARM")
-                    for r in qualified_results
-                }
-
-            with st.form("outreach_selection_form"):
-                for result in qualified_results:
-                    name    = result.get("company", "")
-                    score   = result.get("refined_score") or 0
-                    verdict = result.get("verdict", "COLD")
-                    entry   = result.get("analyst", {}).get("top_entry_point", "")
-                    brief   = result.get("analyst", {}).get("copywriter_brief", "")
-
-                    col_check, col_score, col_info = st.columns([1, 2, 8])
-                    with col_check:
-                        current = st.session_state["outreach_selections"].get(name, False)
-                        st.checkbox(
-                            "", value=current,
-                            key=f"outreach_{name}",
-                            label_visibility="collapsed",
-                        )
-                    with col_score:
-                        st.markdown(_score_bar_html(score), unsafe_allow_html=True)
-                        st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
-                    with col_info:
-                        st.markdown(f"**{name}**")
-                        if entry:
-                            st.caption(f"Entry point: {entry}")
-                        if brief:
-                            st.caption(brief[:200])
-
-                outreach_submitted = st.form_submit_button(
-                    "Draft Outreach",
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if outreach_submitted:
-                _apply_model_overrides()
-                outreach_names = {
-                    r.get("company", "") for r in qualified_results
-                    if st.session_state.get(f"outreach_{r.get('company', '')}", False)
-                }
-
-                _run_id     = st.session_state.get("qualify_run_id", "")
-                _sheets     = st.session_state.get("qualify_sheets") or _get_sc()
-                _usage      = st.session_state.get("qualify_usage")
-                _query      = st.session_state.get("grok_query", "")
-                director    = get_current_user() or "Unknown"
-
-                final_results = []
-                st.info(
-                    f"Running Opus for {len(outreach_names)} prospect(s), "
-                    f"writing {len(qualified_results) - len(outreach_names)} without outreach…"
-                )
-
-                with st.spinner("Claude Opus drafting outreach + writing to Sheets…"):
-                    for result in qualified_results:
-                        name = result.get("company", "")
-                        skip = name not in outreach_names
-                        try:
-                            final = main.draft_outreach_for_prospect(
-                                result=result,
-                                sheets=_sheets,
-                                query=_query,
-                                run_id=_run_id,
-                                dry_run=is_dry_run,
-                                usage=_usage,
-                                bu=bu,
-                                skip_outreach=skip,
-                            )
-                            final_results.append(final)
-                        except Exception as exc:
-                            logger.warning(f"Outreach failed for {name}: {exc}")
-                            final_results.append(result)
-
-                # Write usage
-                if final_results and not is_dry_run and _usage:
-                    try:
-                        usage_sum = _usage.summary()
-                        _sheets.write_usage(
-                            run_id=_run_id,
-                            director=director,
-                            track="Discovery",
-                            query=_query[:120],
-                            companies_researched=len(final_results),
-                            usage_summary=usage_sum,
-                            bu=bu,
-                        )
-                    except Exception as ue:
-                        logger.warning(f"Usage write failed: {ue}")
-
-                for key in ["grok_prospects", "enrichment_selections",
-                            "qualified_results", "outreach_selections",
-                            "sweep_result", "company_selections",
-                            "grok_usage", "grok_sheets",
-                            "sweep_usage", "sweep_sheets"]:
-                    st.session_state.pop(key, None)
-
-                _display_results(final_results, is_dry_run, _query, bu)
-
-
-    # -----------------------------------------------------------------------
-    # COMPANY ENRICHMENT TAB
-    # -----------------------------------------------------------------------
-    with tab_enrichment:
-        from utils.auth import get_current_user
-        from core.enrichment_runner import (
-            parse_company_input, estimate_enrichment_cost,
-            run_bulk_enrichment, run_company_enrichment,
-        )
-
-        st.subheader("Enrich Companies")
-        st.caption(
-            "Already know which companies you want to target? Enter their names here. "
-            "Lead Scout will look up key decision makers, contact details, and recent buying signals for each one. "
-            "Results are saved for 90 days — so if you look up a company you've researched recently, it's instant and free."
-        )
-
-        # ---- Input section ----
-        col_text, col_upload = st.columns([3, 1])
-        with col_text:
-            enrich_text = st.text_area(
-                "Company names",
-                placeholder="Nexstar Media Group, Gray Television, Sinclair Broadcast...\n\nor paste one per line",
-                height=100,
-                key="enrichment_text_input",
-            )
-        with col_upload:
-            st.caption("Or upload a CSV")
-            csv_file = st.file_uploader(
-                "",
-                type=["csv"],
-                key="enrichment_csv_upload",
-                label_visibility="collapsed",
-            )
-
-        # Parse input immediately for preview
-        csv_bytes = csv_file.read() if csv_file else None
-        company_list = parse_company_input(enrich_text, csv_bytes)
-
-        if company_list:
-            st.caption(f"**{len(company_list)} companies detected:** {', '.join(company_list[:8])}"
-                       + (f" +{len(company_list)-8} more" if len(company_list) > 8 else ""))
-
-        is_dry_run_enrich = st.checkbox(
-            "Preview — check what's already cached before running",
-            key="enrichment_dry_run",
-            help="Checks which companies are already saved (free) vs which would need a fresh lookup (costs credits). No API calls are made.",
-        )
-
-        col_est, col_run = st.columns([3, 2])
-
-        with col_est:
-            if st.button(
-                "Estimate Cost",
-                key="estimate_cost_btn",
-                disabled=not company_list,
-            ):
-                director = get_current_user()
-                if not director:
-                    st.warning("Select your name in the sidebar first.")
-                else:
-                    # Quick cache check to estimate fresh vs cached
-                    sc = _get_sc()
-                    cached_count = 0
-                    if sc:
-                        for name in company_list:
-                            from core.enrichment_runner import _resolve_domain
-                            domain = _resolve_domain(name)
-                            if domain and sc.get_enrichment_cache(domain):
-                                cached_count += 1
-
-                    est = estimate_enrichment_cost(len(company_list), cached_count)
-                    st.session_state["enrichment_estimate"] = est
-
-            estimate = st.session_state.get("enrichment_estimate")
-            if estimate:
-                fresh = estimate["fresh"]
-                cached = estimate["cached"]
-                total_cost = estimate["estimated_total"]
-                st.info(
-                    f"**Estimate:** {fresh} fresh · {cached} cached  \n"
-                    f"**~${total_cost:.2f}** total "
-                    f"(${estimate['cost_per_fresh']:.2f}/company)"
-                )
-
-        with col_run:
-            run_enrich_btn = st.button(
-                f"Enrich {len(company_list)} {'Company' if len(company_list) == 1 else 'Companies'}"
-                if company_list else "Add companies above",
-                type="primary",
-                use_container_width=True,
-                key="bulk_enrich_btn",
-                disabled=not company_list,
-            )
-
-        if run_enrich_btn:
-            director = get_current_user()
-            if not director:
-                st.warning("⚠️ Select your name in the sidebar first.")
-            else:
-                # Confirm if not dry run and cost > $1
-                estimate = st.session_state.get("enrichment_estimate", {})
-                if (not is_dry_run_enrich and
-                        estimate.get("estimated_total", 0) > 1.0 and
-                        not st.session_state.get("enrichment_confirmed")):
-                    st.warning(
-                        f"This will cost approximately **${estimate['estimated_total']:.2f}**. "
-                        f"Click **Enrich** again to confirm."
-                    )
-                    st.session_state["enrichment_confirmed"] = True
-                else:
-                    st.session_state.pop("enrichment_confirmed", None)
-                    st.session_state.pop("enrichment_results", None)
-
-                    # Build placeholders for live progress
-                    st.divider()
-                    st.subheader(
-                        f"{"Checking cache" if is_dry_run_enrich else "Enriching"} "
-                        f"{len(company_list)} {'company' if len(company_list) == 1 else 'companies'}…"
-                    )
-
-                    placeholders = {name: st.empty() for name in company_list}
-                    for name in company_list:
-                        placeholders[name].markdown(f"**{name}** · queued")
-
-                    all_results = []
-
-                    def _enrich_start(name, idx, total):
-                        placeholders[name].markdown(
-                            f"**{name}** · {'checking cache' if is_dry_run_enrich else 'enriching'}… "
-                            f"*({idx}/{total})*"
-                        )
-
-                    def _enrich_done(name, result, idx, total):
-                        if result.get("error"):
-                            placeholders[name].markdown(f"**{name}** · {result['error']}")
-                        elif result.get("dry_run"):
-                            cached = result.get("from_cache", False)
-                            placeholders[name].markdown(
-                                f"**{name}** · "
-                                f"{'cached — free' if cached else 'fresh — ~$0.18'}"
-                            )
-                        else:
-                            dm_count = len(result.get("decision_makers", []))
-                            cached   = result.get("from_cache", False)
-                            placeholders[name].markdown(
-                                f"**{name}** · {dm_count} contacts · "
-                                f"{'cached' if cached else 'fresh'}"
-                            )
-                        all_results.append(result)
-
-                    sc = _get_sc()
-                    with st.spinner(
-                        f"{'Checking cache' if is_dry_run_enrich else 'Running enrichment'} "
-                        f"for {len(company_list)} companies…"
-                    ):
-                        run_bulk_enrichment(
-                            companies=company_list,
-                            bu=bu,
-                            director=director,
-                            dry_run=is_dry_run_enrich,
-                            sheets=sc,
-                            on_company_start=_enrich_start,
-                            on_company_done=_enrich_done,
-                        )
-
-                    st.session_state["enrichment_results"] = all_results
-                    if is_dry_run_enrich:
-                        cached_n = sum(1 for r in all_results if r.get("from_cache"))
-                        st.success(
-                            f"Dry run complete — {cached_n} cached, "
-                            f"{len(all_results)-cached_n} would require fresh enrichment"
-                        )
-                        _browser_notify(
-                            "Accedo Lead Scout — Dry run complete",
-                            f"{cached_n} cached · {len(all_results)-cached_n} would need fresh enrichment",
-                        )
-                    else:
-                        st.success(f"Enrichment complete — {len(all_results)} companies processed")
-                        _browser_notify(
-                            "Accedo Lead Scout — Enrichment complete",
-                            f"{len(all_results)} company/companies processed",
-                        )
-
-        # ---- Results display ----
-        enrich_results = st.session_state.get("enrichment_results", [])
-        fresh_results  = [r for r in enrich_results if not r.get("dry_run") and not r.get("error")]
-
-        if fresh_results:
-            st.divider()
-            for result in fresh_results:
-                company_name = result.get("company", "")
-                domain       = result.get("domain", "")
-                from_cache   = result.get("from_cache", False)
-                dms          = result.get("decision_makers", [])
-                intent       = result.get("intent_topics", [])
-                grok_sig     = result.get("grok_signal", "")
-
-                with st.expander(
-                    f"**{company_name}**"
-                    + (f" · [{domain}](https://{domain})" if domain else "")
-                    + f" · {len(dms)} contacts",
-                    expanded=False,
-                ):
-                    if grok_sig:
-                        st.markdown("**Recent OTT Signal**")
-                        st.info(grok_sig)
-
-                    if intent:
-                        st.markdown("**Intent Topics**")
-                        st.write("  ".join(f"`{t}`" for t in intent))
-
-                    if dms:
-                        st.markdown("**Decision Makers**")
-                        for dm in dms:
-                            name    = dm.get("name", "")
-                            title   = dm.get("title", "")
-                            li      = dm.get("linkedin", "")
-                            email   = dm.get("email", "")
-                            loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
-
-                            dm_c1, dm_c2, dm_c3 = st.columns([3, 2, 2])
-                            with dm_c1:
-                                name_md = f"[{name}]({li})" if li else name
-                                st.markdown(f"**{name_md}**  \n{title}")
-                            with dm_c2:
-                                if email:
-                                    st.caption(email)
-                                if loc:
-                                    st.caption(loc)
-                            with dm_c3:
-                                if li:
-                                    st.markdown(f"[LinkedIn →]({li})")
-                    else:
-                        st.caption("No decision makers found via Apollo.")
-
-                    if from_cache:
-                        st.caption(f"Cached: {result.get('cached_date', '')[:10]}")
-
-    # -----------------------------------------------------------------------
-    # ACCOUNT INTELLIGENCE TAB
-    # -----------------------------------------------------------------------
-    with tab_accounts:
-        st.subheader(f"Account Intelligence · {bu}")
-        st.caption(
-            "Research companies you're already tracking — no search step needed. "
-            "Lead Scout goes straight to deep research on each account in your list. "
-            "Use the import section below to add accounts, then click Run."
-        )
-
-
-        # ---- Import section ----
-        with st.expander("Import Accounts from CSV", expanded=False):
-            st.caption(
-                "Upload a spreadsheet of companies to add to your tracked accounts list. "
-                "Required columns: **Company**, **Domain**. "
-                "Optional but helpful: LinkedIn URL, Tier, Region."
-            )
-            uploaded = st.file_uploader(
-                "Upload CSV",
-                type=["csv"],
-                key="account_upload",
-                help="Company and Domain columns are required.",
-            )
-
-            if uploaded:
-                try:
-                    import io
-                    df_import = pd.read_csv(io.StringIO(uploaded.read().decode("utf-8")))
-                    df_import.columns = [c.strip() for c in df_import.columns]
-
-                    required = {"Company", "Domain"}
-                    missing_cols = required - set(df_import.columns)
-                    if missing_cols:
-                        st.error(f"Missing required columns: {', '.join(missing_cols)}")
-                    else:
-                        # Show coverage gap warnings
-                        missing_li = df_import["LinkedIn URL"].isna().sum() if "LinkedIn URL" in df_import.columns else len(df_import)
-                        if missing_li > 0:
-                            st.warning(f"{missing_li} row(s) missing LinkedIn URL — these will have reduced Exa enrichment.")
-
-                        missing_domain = df_import["Domain"].isna().sum()
-                        if missing_domain > 0:
-                            st.error(f"{missing_domain} row(s) missing Domain — these will be skipped.")
-                            df_import = df_import.dropna(subset=["Domain"])
-
-                        st.markdown(f"**Preview — {len(df_import)} accounts · BU={bu}**")
-                        st.dataframe(df_import.head(10), hide_index=True)
-
-                        if st.button("Confirm Import", key="confirm_import"):
-                            sc = _get_sc()
-                            imported = 0
-                            for _, row in df_import.iterrows():
-                                sc.upsert_account({
-                                    "Company":      str(row.get("Company", "")),
-                                    "Domain":       str(row.get("Domain", "")),
-                                    "LinkedIn URL": str(row.get("LinkedIn URL", "")),
-                                    "BU":           bu,
-                                    "Tier":         str(row.get("Tier", "")),
-                                    "Region":       str(row.get("Region", "")),
-                                })
-                                imported += 1
-                            st.success(f"{imported} account(s) imported to Accounts tab · BU={bu}")
-                            # Invalidate accounts cache
-                            st.session_state.pop("accounts_cache", None)
-                            st.rerun()
-
-                except Exception as exc:
-                    st.error(f"Could not parse CSV: {exc}")
-
-        # ---- Accounts table ----
-        st.markdown(f"**Tracked Accounts · BU={bu}**")
-
-        # on button click the load accounts
-        acc_cache_key = f"accounts_{bu}"
-        acc_cache_ts  = f"accounts_cache_ts_{bu}"
-        
-        col_refresh, _ = st.columns([1, 4])
-        with col_refresh:
-            if st.button("Load Accounts", key="load_accounts_btn"):
-                try:
-                    sc = _get_sc()
-                    if sc:
-                        st.session_state[acc_cache_key] = sc.get_accounts(bu_filter=bu)
-                except Exception as exc:
-                    st.error(f"Could not load accounts: {exc}")
-
-        accounts = st.session_state.get(acc_cache_key, [])
-
-        if accounts:
-            acc_df = pd.DataFrame(accounts)
-            # Highlight accounts never run or not run in 30+ days
-            def _last_run_color(val):
-                if not val:
-                    return "background-color: #fde8e8"
-                try:
-                    from datetime import datetime as dt
-                    last = dt.strptime(val, "%Y-%m-%d %H:%M UTC")
-                    days = (dt.utcnow() - last).days
-                    if days > 30:
-                        return "background-color: #fff7d6"
-                except Exception:
-                    pass
-                return ""
-            st.dataframe(
-                acc_df.style.applymap(_last_run_color, subset=["Last Run"]) if "Last Run" in acc_df.columns else acc_df,
-                width='stretch', hide_index=True,
-            )
-        else:
-            st.caption(f"No accounts found for BU={bu}. Import a CSV above to get started.")
-
-        # ---- Run account intelligence ----
         st.divider()
-        acc_run_btn = st.button(
-            f"Run Account Intelligence · BU={bu}",
-            type="primary",
+        st.caption("**Anything specific to focus on?** *(optional — add context like a specific competitor, technology, or timeline)*")
+        context_val = st.text_input(
+            "",
+            value=st.session_state.get("form_context", ""),
+            placeholder="e.g. stranded on 24i, just acquired X, mobile-only right now…",
+            key="form_context_input",
+            label_visibility="collapsed",
+        )
+
+        form_submitted = st.form_submit_button(
+            "Build My Search",
             use_container_width=True,
-            key="acc_run_btn",
-            disabled=not accounts,
         )
 
-        if acc_run_btn:
-            _apply_model_overrides()
-            st.session_state["view_mode"] = "run"
-            log_stream = st.session_state.get("log_stream")
-            if log_stream:
-                log_stream.truncate(0)
-                log_stream.seek(0)
+    # Process form submission — runs once when rep clicks Build Brief
+    if form_submitted:
+        if not selected_verticals or not selected_signals:
+            st.warning("Select at least one vertical and one signal.")
+        else:
+            st.session_state["form_verticals"] = selected_verticals
+            st.session_state["form_signals"]   = selected_signals
+            st.session_state["form_context"]   = context_val
 
-            with st.status(
-                f"Running account intelligence for {len(accounts)} account(s) · BU={bu}…",
-                expanded=True,
-            ) as status:
-                st.write(f"Grok researching {len(accounts)} tracked account(s)…")
+            bu_label = {
+                "NAM":  "North America (US, Canada, Mexico)",
+                "E&L":  "Europe or Latin America",
+                "APAC": "Asia Pacific",
+            }.get(bu, bu)
+
+            auto_brief = (
+                f"Find Tier 1, Tier 2, and ambitious Tier 3 {', '.join(selected_verticals)} companies "
+                f"headquartered in {bu_label} "
+                f"showing these OTT buying signals: {', '.join(selected_signals)}."
+            )
+            if context_val.strip():
+                auto_brief += f"\n\nAdditional context: {context_val.strip()}"
+
+            # Enrich with Gemini — fast call, falls back silently if it fails
+            final_brief = auto_brief
+            used_gemini = False
+
+            # Create RunUsage now so Gemini tokens are tracked from the start
+            from utils.usage_tracker import RunUsage as _RunUsage
+            _brief_usage = _RunUsage(", ".join(selected_verticals))
+            _brief_usage.start_prospect("_brief_enrichment")
+
+            try:
+                _gemini_key = (st.secrets.get("GEMINI_API_KEY", "") or
+                               config.GEMINI_API_KEY or
+                               os.environ.get("GEMINI_API_KEY", ""))
+            except Exception:
+                _gemini_key = config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+
+            if _gemini_key:
                 try:
-                    sc = _get_sc()
-                    results = main.run_account_pipeline(
+                    from tools.gemini import enrich_brief
+                    enrichment = enrich_brief(
+                        auto_brief=auto_brief,
+                        verticals=selected_verticals,
+                        signals=selected_signals,
                         bu=bu,
-                        dry_run=is_dry_run,
-                        sheets_client=sc,
+                        usage_tracker=_brief_usage,
                     )
-                    status.update(label="Account intelligence complete", state="complete", expanded=False)
-                    _browser_notify(
-                        "Accedo Lead Scout — Account intelligence complete",
-                        f"BU={bu} · results are ready",
+                    final_brief = enrichment.get("enriched_brief", auto_brief)
+                    used_gemini = enrichment.get("used_gemini", False)
+                except Exception as _e:
+                    st.warning(f"Gemini enrichment debug: {_e}")
+
+            _brief_usage.end_prospect()
+            st.session_state["brief_run_usage"] = _brief_usage
+
+            st.session_state["brief_text_area"]     = final_brief
+            st.session_state["brief_used_gemini"]   = used_gemini
+            st.session_state["last_selection_hash"] = hash((
+                tuple(sorted(selected_verticals)),
+                tuple(sorted(selected_signals)),
+                context_val.strip(), bu,
+            ))
+            for key in ["sweep_result", "grok_prospects", "enrichment_selections"]:
+                st.session_state.pop(key, None)
+
+    # ----------------------------------------------------------------
+    # STAGE B — Brief display + Find Companies (shown after form submit)
+    # ----------------------------------------------------------------
+    if st.session_state.get("brief_text_area"):
+        st.divider()
+        used_gemini = st.session_state.get("brief_used_gemini", False)
+        st.caption(
+            "**Step 2 — Review your search** — you can edit this before searching"
+            + (" · refined by Gemini" if used_gemini else "")
+        )
+
+        edited_brief = st.text_area(
+            "",
+            value=st.session_state.get("brief_text_area", ""),
+            height=160,
+            key="brief_text_area",
+            label_visibility="collapsed",
+        )
+
+        sweep_btn = st.button(
+            "Find Companies",
+            use_container_width=True,
+            type="primary",
+            key="sweep_btn",
+            disabled=not edited_brief.strip(),
+        )
+
+        # ---- Discovery sweep ----
+        if sweep_btn:
+            _apply_model_overrides()
+            for key in ["sweep_result", "company_selections",
+                        "grok_prospects", "enrichment_selections"]:
+                st.session_state.pop(key, None)
+
+            st.info("Grok is scanning the web — this takes 60–90 seconds per vertical…")
+            with st.status(
+                "Searching for companies…", expanded=True
+            ) as status:
+                selected_verticals_for_sweep = st.session_state.get("form_verticals", [])
+                total_verticals = len(selected_verticals_for_sweep) or 1
+
+                if total_verticals > 1:
+                    st.write(f"Running {total_verticals} vertical sweeps in sequence…")
+
+                v_placeholders = {}
+                for v in selected_verticals_for_sweep:
+                    v_placeholders[v] = st.empty()
+                    v_placeholders[v].markdown(f"**{v}** · queued")
+
+                def _on_v_start(vertical, idx, total):
+                    if vertical in v_placeholders:
+                        v_placeholders[vertical].markdown(
+                            f"**{vertical}** · searching… *({idx}/{total})*"
+                        )
+
+                def _on_v_done(vertical, companies, idx, total):
+                    if vertical in v_placeholders:
+                        v_placeholders[vertical].markdown(
+                            f"**{vertical}** · {len(companies)} found"
+                        )
+
+                try:
+                    sweep = main.run_discovery_sweep(
+                        edited_brief,
+                        bu=bu,
+                        signals=st.session_state.get("form_signals", []),
+                        verticals=selected_verticals_for_sweep,
+                        director=get_current_user() or "",
+                        usage=st.session_state.get("brief_run_usage"),
+                        on_vertical_start=_on_v_start,
+                        on_vertical_done=_on_v_done,
                     )
+                    st.session_state["sweep_result"]  = sweep
+                    st.session_state["sweep_brief"]   = edited_brief
+                    st.session_state["sweep_usage"]   = sweep.get("usage")
+                    st.session_state["sweep_sheets"]  = sweep.get("sheets")
+                    companies = sweep.get("companies", [])
+                    status.update(
+                        label=f"Found {len(companies)} companies — select which to research below",
+                        state="complete", expanded=True,
+                    )
+                    _sweep_u = sweep.get("usage")
+                    if _sweep_u:
+                        try:
+                            _sweep_u.finish()
+                            st.session_state["sweep_usage_summary"] = _sweep_u.summary()
+                        except Exception:
+                            pass
                 except Exception as exc:
-                    status.update(label="Pipeline error", state="error", expanded=True)
+                    status.update(label="Error", state="error", expanded=True)
                     st.error(f"**Error:** {exc}")
                     st.exception(exc)
-                    results = []
 
-            if not results:
-                st.warning("No results returned. Check the Pipeline Log for details.")
+            # Render sweep cost outside the collapsible status block
+            if st.session_state.get("sweep_usage_summary"):
+                render_usage_panel(st.session_state["sweep_usage_summary"])
+
+    # ----------------------------------------------------------------
+    # STAGE C — Company selection
+    # ----------------------------------------------------------------
+    sweep_result = st.session_state.get("sweep_result")
+
+    if sweep_result:
+        companies = sweep_result.get("companies", [])
+        search_summary = sweep_result.get("search_summary", "")
+
+        if not companies:
+            st.warning(
+                "No companies found. Try adjusting your brief "
+                "or selecting different signals."
+            )
+        else:
+            st.divider()
+            st.subheader(f"{len(companies)} companies found")
+            if search_summary:
+                st.caption(search_summary)
+            st.caption(
+                "**Step 3 — Pick which companies to research.** "
+                "Select up to 5. Lead Scout will read the web for each one and score its opportunity — "
+                "results appear as each finishes."
+            )
+
+            # Initialise selections — all unchecked by default
+            if "company_selections" not in st.session_state:
+                st.session_state["company_selections"] = {
+                    c.get("name", ""): False for c in companies
+                }
+
+            with st.form("company_selection_form"):
+                for company in companies:
+                    name        = company.get("name", "")
+                    evidence    = company.get("evidence", "")
+                    signal_type = company.get("signal_type", "")
+                    source_url  = company.get("source_url", "")
+                    hq          = company.get("hq_country", "")
+
+                    col_check, col_info = st.columns([1, 10])
+                    with col_check:
+                        current = st.session_state["company_selections"].get(name, False)
+                        checked = st.checkbox(
+                            "", value=current,
+                            key=f"sel_{name}",
+                            label_visibility="collapsed",
+                        )
+                    with col_info:
+                        name_md = f"[{name}]({source_url})" if source_url else name
+                        meta    = f" · {hq}" if hq else ""
+                        badge   = f"`{signal_type}`" if signal_type else ""
+                        st.markdown(f"**{name_md}**{meta}  {badge}")
+                        if evidence:
+                            st.caption(evidence)
+
+                research_submitted = st.form_submit_button(
+                    "Research Selected Companies",
+                    use_container_width=True,
+                    type="primary",
+                )
+
+            # Process selections after form submit
+            if research_submitted:
+                # Collect checked companies from form widget state
+                selected_companies = [
+                    c for c in companies
+                    if st.session_state.get(f"sel_{c.get('name', '')}", False)
+                ]
+                # Update company_selections session state
+                for c in companies:
+                    n = c.get("name", "")
+                    st.session_state["company_selections"][n] = st.session_state.get(f"sel_{n}", False)
+
+                selected_count = len(selected_companies)
+                if selected_count == 0:
+                    st.warning("Select at least one company above.")
+                else:
+                    st.caption(f"{selected_count} selected for deep research")
+                    _apply_model_overrides()
+                    st.session_state.pop("grok_prospects", None)
+                    st.session_state.pop("enrichment_selections", None)
+
+                    total  = selected_count
+                    brief  = st.session_state.get("sweep_brief", "")
+                    run_id = sweep_result.get("run_id", "")
+
+                    st.divider()
+                    st.subheader(f"Researching {total} {'company' if total == 1 else 'companies'}…")
+
+                    placeholders = {}
+                    for company in selected_companies:
+                        name = company.get("name", "")
+                        placeholders[name] = st.empty()
+                        placeholders[name].markdown(f"**{name}** · queued")
+
+                    completed_prospects = []
+
+                    def _on_start(name, idx, total):
+                        placeholders[name].markdown(
+                            f"**{name}** · researching… *({idx}/{total})*"
+                        )
+
+                    def _on_done(name, prospect, idx, total):
+                        score   = prospect.get("opportunity_score") or 0
+                        verdict = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
+                        opp     = prospect.get("opportunity_type", "")
+                        err     = prospect.get("error")
+                        if err:
+                            placeholders[name].markdown(f"**{name}** · research failed — {err}")
+                        else:
+                            placeholders[name].markdown(
+                                f"**{name}** · **{score}** · {verdict}"
+                                + (f" · *{opp}*" if opp else "")
+                            )
+                        completed_prospects.append(prospect)
+
+                    try:
+                        _sweep_usage  = st.session_state.get("sweep_usage")
+                        _sweep_sheets = st.session_state.get("sweep_sheets")
+
+                        with st.spinner("Grok deep research running — 2–4 minutes per company…"):
+                            grok_result = main.run_grok_only(
+                                query=brief,
+                                bu=bu,
+                                selected_companies=selected_companies,
+                                run_id=run_id,
+                                on_company_start=_on_start,
+                                on_company_done=_on_done,
+                                usage=_sweep_usage,
+                                sheets=_sweep_sheets,
+                            )
+
+                        all_prospects = grok_result.get("prospects", [])
+                        st.session_state["grok_prospects"]  = all_prospects
+                        st.session_state["grok_run_id"]     = run_id
+                        st.session_state["grok_query"]      = brief
+                        st.session_state["grok_usage"]      = grok_result.get("usage")
+                        st.session_state["grok_sheets"]     = grok_result.get("sheets")
+                        st.session_state["grok_discovery"]  = {
+                            "discovery_ran": True,
+                            "gemini_ran":    True,
+                            "all_found":     [],
+                            "selected":      [],
+                            "rejected":      [],
+                            "search_strings": [],
+                        }
+
+                        _interim_usage = grok_result.get("usage")
+                        if _interim_usage:
+                            _interim_snapshot = _interim_usage.summary()
+                            st.session_state["grok_interim_usage"] = _interim_snapshot
+
+                        st.success(
+                            f"Research complete — "
+                            f"{len(all_prospects)} prospects ready for enrichment below"
+                        )
+                        _browser_notify(
+                            "Accedo Lead Scout — Research complete",
+                            f"{len(all_prospects)} prospect(s) ready for enrichment",
+                        )
+                        _snapshot = st.session_state.get("grok_interim_usage")
+                        if _snapshot:
+                            render_usage_panel(_snapshot)
+
+                    except Exception as exc:
+                        st.error(f"**Research error:** {exc}")
+                        st.exception(exc)
+
+    # ----------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # STAGE E — Enrichment selection (Apollo + Exa + Sonnet)
+    # ----------------------------------------------------------------
+    grok_prospects = st.session_state.get("grok_prospects", [])
+
+    if grok_prospects:
+        st.divider()
+        st.subheader("Step 4 — Choose which prospects to qualify fully")
+        st.caption(
+            "HOT and WARM prospects are pre-checked. "
+            "Qualifying a prospect looks up their key decision makers (via Apollo & LinkedIn), "
+            "then scores them with Claude. "
+            "Companies you don't select are archived to your Cold Leads tab without any contact lookup."
+        )
+
+        if "enrichment_selections" not in st.session_state:
+            st.session_state["enrichment_selections"] = {
+                p.get("name", ""): (p.get("opportunity_score") or 0) >= 50
+                for p in grok_prospects
+            }
+
+        with st.form("enrichment_selection_form"):
+            for prospect in grok_prospects:
+                name     = prospect.get("name", "")
+                score    = prospect.get("opportunity_score") or 0
+                verdict  = "HOT" if score >= 70 else "WARM" if score >= 50 else "COLD"
+                opp_type = prospect.get("opportunity_type", "")
+                gap      = prospect.get("transition_gap_timer", "")
+
+                col_check, col_score, col_info = st.columns([1, 2, 8])
+                with col_check:
+                    current = st.session_state["enrichment_selections"].get(name, False)
+                    st.checkbox(
+                        "", value=current,
+                        key=f"enrich_{name}",
+                        label_visibility="collapsed",
+                    )
+                with col_score:
+                    st.markdown(_score_bar_html(score), unsafe_allow_html=True)
+                    st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
+                with col_info:
+                    detail = f"*{opp_type}*" if opp_type else ""
+                    if gap:
+                        detail += f" · {gap}"
+                    st.markdown(
+                        f"**{name}**  \n{detail}" if detail else f"**{name}**"
+                    )
+
+            enrich_submitted = st.form_submit_button(
+                "Qualify Selected",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if enrich_submitted:
+            enrichment_names = {
+                p.get("name", "") for p in grok_prospects
+                if st.session_state.get(f"enrich_{p.get('name', '')}", False)
+            }
+            for p in grok_prospects:
+                n = p.get("name", "")
+                st.session_state["enrichment_selections"][n] = n in enrichment_names
+
+            enrichment_count = len(enrichment_names)
+            if enrichment_count == 0:
+                st.warning("⬆️ Select at least one company above.")
             else:
-                # Invalidate accounts cache so Last Run updates
-                st.session_state.pop(acc_cache_key, None)
-                _display_results(results, is_dry_run, f"[ACCOUNT] BU={bu}", bu)
+                _apply_model_overrides()
+                _grok_usage  = st.session_state.get("grok_usage")
+                _grok_sheets = st.session_state.get("grok_sheets") or _get_sc()
+                query        = st.session_state.get("grok_query", "")
+                run_id       = st.session_state.get("grok_run_id", "")
+
+                qualified_results = []
+                unselected_names  = {
+                    p.get("name", "") for p in grok_prospects
+                    if p.get("name", "") not in enrichment_names
+                }
+
+                # Archive unselected immediately
+                for prospect in grok_prospects:
+                    name = prospect.get("name", "")
+                    if name in unselected_names and not is_dry_run:
+                        try:
+                            stub_analyst = {
+                                "refined_score": prospect.get("opportunity_score", 0),
+                                "verdict": "COLD",
+                                "write_to_sheet": False,
+                                "skip_reason": "Not selected for qualification by user",
+                                "top_entry_point": "",
+                                "score_delta_reasoning": "Archived by user",
+                                "copywriter_brief": "",
+                                "transition_gap_confirmed": "",
+                                "key_risk_if_no_action": "",
+                            }
+                            stub_emails = {
+                                "visionary_email": {"subject_line": f"{name} — archived", "body": "Not selected for qualification."},
+                                "operator_email": {"subject_line": "", "body": ""},
+                            }
+                            _grok_sheets.append_lead(
+                                prospect, stub_analyst, stub_emails,
+                                contact=None, query=query,
+                                is_cold=True, bu=bu,
+                            )
+                        except Exception:
+                            pass
+
+                # Qualify selected companies
+                placeholders = {
+                    p.get("name", ""): st.empty()
+                    for p in grok_prospects
+                    if p.get("name", "") in enrichment_names
+                }
+                for name in enrichment_names:
+                    placeholders[name].markdown(f"**{name}** · queued")
+
+                st.info("Running Apollo → Exa → Sonnet qualification…")
+
+                for prospect in grok_prospects:
+                    name = prospect.get("name", "")
+                    if name not in enrichment_names:
+                        continue
+                    placeholders[name].markdown(f"**{name}** · qualifying…")
+                    try:
+                        result = main.qualify_prospect_only(
+                            prospect=prospect,
+                            sheets=_grok_sheets,
+                            query=query,
+                            run_id=run_id,
+                            dry_run=is_dry_run,
+                            usage=_grok_usage,
+                            bu=bu,
+                        )
+                        score   = result.get("refined_score") or 0
+                        verdict = result.get("verdict", "COLD")
+                        v_icon  = "" if verdict == "HOT" else "" if verdict == "WARM" else ""
+                        entry   = result.get("analyst", {}).get("top_entry_point", "")[:60]
+                        placeholders[name].markdown(
+                            f"**{name}** · **{score}** · {verdict}"
+                            + (f"  \n*{entry}*" if entry else "")
+                        )
+                        qualified_results.append(result)
+                    except Exception as exc:
+                        placeholders[name].markdown(f"**{name}** · error: {exc}")
+
+                st.session_state["qualified_results"] = qualified_results
+                st.session_state["qualify_run_id"]    = run_id
+                st.session_state["qualify_sheets"]    = _grok_sheets
+                st.session_state["qualify_usage"]     = _grok_usage
+
+    # ----------------------------------------------------------------
+    # STAGE F — Outreach selection (Opus)
+    # ----------------------------------------------------------------
+    qualified_results = st.session_state.get("qualified_results", [])
+    hot_warm = [r for r in qualified_results if r.get("verdict") in ("HOT", "WARM")]
+
+    if qualified_results:
+        st.divider()
+        st.subheader("Step 5 — Choose who gets a personalised email draft")
+        st.caption(
+            "Lead Scout will write personalised outreach emails for each prospect you select here — "
+            "one for the strategic decision maker and one for the technical owner. "
+            "Prospects you skip will still be saved to Sheets, just without email drafts."
+        )
+
+        if "outreach_selections" not in st.session_state:
+            st.session_state["outreach_selections"] = {
+                r.get("company", ""): r.get("verdict") in ("HOT", "WARM")
+                for r in qualified_results
+            }
+
+        with st.form("outreach_selection_form"):
+            for result in qualified_results:
+                name    = result.get("company", "")
+                score   = result.get("refined_score") or 0
+                verdict = result.get("verdict", "COLD")
+                entry   = result.get("analyst", {}).get("top_entry_point", "")
+                brief   = result.get("analyst", {}).get("copywriter_brief", "")
+
+                col_check, col_score, col_info = st.columns([1, 2, 8])
+                with col_check:
+                    current = st.session_state["outreach_selections"].get(name, False)
+                    st.checkbox(
+                        "", value=current,
+                        key=f"outreach_{name}",
+                        label_visibility="collapsed",
+                    )
+                with col_score:
+                    st.markdown(_score_bar_html(score), unsafe_allow_html=True)
+                    st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
+                with col_info:
+                    st.markdown(f"**{name}**")
+                    if entry:
+                        st.caption(f"Entry point: {entry}")
+                    if brief:
+                        st.caption(brief[:200])
+
+            outreach_submitted = st.form_submit_button(
+                "Draft Outreach",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if outreach_submitted:
+            _apply_model_overrides()
+            outreach_names = {
+                r.get("company", "") for r in qualified_results
+                if st.session_state.get(f"outreach_{r.get('company', '')}", False)
+            }
+
+            _run_id     = st.session_state.get("qualify_run_id", "")
+            _sheets     = st.session_state.get("qualify_sheets") or _get_sc()
+            _usage      = st.session_state.get("qualify_usage")
+            _query      = st.session_state.get("grok_query", "")
+            director    = get_current_user() or "Unknown"
+
+            final_results = []
+            st.info(
+                f"Running Opus for {len(outreach_names)} prospect(s), "
+                f"writing {len(qualified_results) - len(outreach_names)} without outreach…"
+            )
+
+            with st.spinner("Claude Opus drafting outreach + writing to Sheets…"):
+                for result in qualified_results:
+                    name = result.get("company", "")
+                    skip = name not in outreach_names
+                    try:
+                        final = main.draft_outreach_for_prospect(
+                            result=result,
+                            sheets=_sheets,
+                            query=_query,
+                            run_id=_run_id,
+                            dry_run=is_dry_run,
+                            usage=_usage,
+                            bu=bu,
+                            skip_outreach=skip,
+                        )
+                        final_results.append(final)
+                    except Exception as exc:
+                        logger.warning(f"Outreach failed for {name}: {exc}")
+                        final_results.append(result)
+
+            # Write usage
+            if final_results and not is_dry_run and _usage:
+                try:
+                    usage_sum = _usage.summary()
+                    _sheets.write_usage(
+                        run_id=_run_id,
+                        director=director,
+                        track="Discovery",
+                        query=_query[:120],
+                        companies_researched=len(final_results),
+                        usage_summary=usage_sum,
+                        bu=bu,
+                    )
+                except Exception as ue:
+                    logger.warning(f"Usage write failed: {ue}")
+
+            for key in ["grok_prospects", "enrichment_selections",
+                        "qualified_results", "outreach_selections",
+                        "sweep_result", "company_selections",
+                        "grok_usage", "grok_sheets",
+                        "sweep_usage", "sweep_sheets"]:
+                st.session_state.pop(key, None)
+
+            _display_results(final_results, is_dry_run, _query, bu)
+
+
+elif active_page == "enrich":
+    from utils.auth import get_current_user
+    from core.enrichment_runner import (
+        parse_company_input, estimate_enrichment_cost,
+        run_bulk_enrichment, run_company_enrichment,
+    )
+
+    st.subheader("Enrich Companies")
+    st.caption(
+        "Already know which companies you want to target? Enter their names here. "
+        "Lead Scout will look up key decision makers, contact details, and recent buying signals for each one. "
+        "Results are saved for 90 days — so if you look up a company you've researched recently, it's instant and free."
+    )
+
+    # ---- Input section ----
+    col_text, col_upload = st.columns([3, 1])
+    with col_text:
+        enrich_text = st.text_area(
+            "Company names",
+            placeholder="Nexstar Media Group, Gray Television, Sinclair Broadcast...\n\nor paste one per line",
+            height=100,
+            key="enrichment_text_input",
+        )
+    with col_upload:
+        st.caption("Or upload a CSV")
+        csv_file = st.file_uploader(
+            "",
+            type=["csv"],
+            key="enrichment_csv_upload",
+            label_visibility="collapsed",
+        )
+
+    # Parse input immediately for preview
+    csv_bytes = csv_file.read() if csv_file else None
+    company_list = parse_company_input(enrich_text, csv_bytes)
+
+    if company_list:
+        st.caption(f"**{len(company_list)} companies detected:** {', '.join(company_list[:8])}"
+                   + (f" +{len(company_list)-8} more" if len(company_list) > 8 else ""))
+
+    is_dry_run_enrich = st.checkbox(
+        "Preview — check what's already cached before running",
+        key="enrichment_dry_run",
+        help="Checks which companies are already saved (free) vs which would need a fresh lookup (costs credits). No API calls are made.",
+    )
+
+    col_est, col_run = st.columns([3, 2])
+
+    with col_est:
+        if st.button(
+            "Estimate Cost",
+            key="estimate_cost_btn",
+            type="primary",
+            disabled=not company_list,
+        ):
+            director = get_current_user()
+            if not director:
+                st.warning("Select your name in the sidebar first.")
+            else:
+                # Quick cache check to estimate fresh vs cached
+                sc = _get_sc()
+                cached_count = 0
+                if sc:
+                    for name in company_list:
+                        from core.enrichment_runner import _resolve_domain
+                        domain = _resolve_domain(name)
+                        if domain and sc.get_enrichment_cache(domain):
+                            cached_count += 1
+
+                est = estimate_enrichment_cost(len(company_list), cached_count)
+                st.session_state["enrichment_estimate"] = est
+
+        estimate = st.session_state.get("enrichment_estimate")
+        if estimate:
+            fresh = estimate["fresh"]
+            cached = estimate["cached"]
+            total_cost = estimate["estimated_total"]
+            st.info(
+                f"**Estimate:** {fresh} fresh · {cached} cached  \n"
+                f"**~${total_cost:.2f}** total "
+                f"(${estimate['cost_per_fresh']:.2f}/company)"
+            )
+
+    with col_run:
+        run_enrich_btn = st.button(
+            f"Enrich {len(company_list)} {'Company' if len(company_list) == 1 else 'Companies'}"
+            if company_list else "Add companies above",
+            type="primary",
+            use_container_width=True,
+            key="bulk_enrich_btn",
+            disabled=not company_list,
+        )
+
+    if run_enrich_btn:
+        director = get_current_user()
+        if not director:
+            st.warning("⚠️ Select your name in the sidebar first.")
+        else:
+            # Confirm if not dry run and cost > $1
+            estimate = st.session_state.get("enrichment_estimate", {})
+            if (not is_dry_run_enrich and
+                    estimate.get("estimated_total", 0) > 1.0 and
+                    not st.session_state.get("enrichment_confirmed")):
+                st.warning(
+                    f"This will cost approximately **${estimate['estimated_total']:.2f}**. "
+                    f"Click **Enrich** again to confirm."
+                )
+                st.session_state["enrichment_confirmed"] = True
+            else:
+                st.session_state.pop("enrichment_confirmed", None)
+                st.session_state.pop("enrichment_results", None)
+
+                # Build placeholders for live progress
+                st.divider()
+                st.subheader(
+                    f"{"Checking cache" if is_dry_run_enrich else "Enriching"} "
+                    f"{len(company_list)} {'company' if len(company_list) == 1 else 'companies'}…"
+                )
+
+                placeholders = {name: st.empty() for name in company_list}
+                for name in company_list:
+                    placeholders[name].markdown(f"**{name}** · queued")
+
+                all_results = []
+
+                def _enrich_start(name, idx, total):
+                    placeholders[name].markdown(
+                        f"**{name}** · {'checking cache' if is_dry_run_enrich else 'enriching'}… "
+                        f"*({idx}/{total})*"
+                    )
+
+                def _enrich_done(name, result, idx, total):
+                    if result.get("error"):
+                        placeholders[name].markdown(f"**{name}** · {result['error']}")
+                    elif result.get("dry_run"):
+                        cached = result.get("from_cache", False)
+                        placeholders[name].markdown(
+                            f"**{name}** · "
+                            f"{'cached — free' if cached else 'fresh — ~$0.18'}"
+                        )
+                    else:
+                        dm_count = len(result.get("decision_makers", []))
+                        cached   = result.get("from_cache", False)
+                        placeholders[name].markdown(
+                            f"**{name}** · {dm_count} contacts · "
+                            f"{'cached' if cached else 'fresh'}"
+                        )
+                    all_results.append(result)
+
+                sc = _get_sc()
+                with st.spinner(
+                    f"{'Checking cache' if is_dry_run_enrich else 'Running enrichment'} "
+                    f"for {len(company_list)} companies…"
+                ):
+                    run_bulk_enrichment(
+                        companies=company_list,
+                        bu=bu,
+                        director=director,
+                        dry_run=is_dry_run_enrich,
+                        sheets=sc,
+                        on_company_start=_enrich_start,
+                        on_company_done=_enrich_done,
+                    )
+
+                st.session_state["enrichment_results"] = all_results
+                if is_dry_run_enrich:
+                    cached_n = sum(1 for r in all_results if r.get("from_cache"))
+                    st.success(
+                        f"Dry run complete — {cached_n} cached, "
+                        f"{len(all_results)-cached_n} would require fresh enrichment"
+                    )
+                    _browser_notify(
+                        "Accedo Lead Scout — Dry run complete",
+                        f"{cached_n} cached · {len(all_results)-cached_n} would need fresh enrichment",
+                    )
+                else:
+                    st.success(f"Enrichment complete — {len(all_results)} companies processed")
+                    _browser_notify(
+                        "Accedo Lead Scout — Enrichment complete",
+                        f"{len(all_results)} company/companies processed",
+                    )
+
+    # ---- Results display ----
+    enrich_results = st.session_state.get("enrichment_results", [])
+    fresh_results  = [r for r in enrich_results if not r.get("dry_run") and not r.get("error")]
+
+    if fresh_results:
+        st.divider()
+        for result in fresh_results:
+            company_name = result.get("company", "")
+            domain       = result.get("domain", "")
+            from_cache   = result.get("from_cache", False)
+            dms          = result.get("decision_makers", [])
+            intent       = result.get("intent_topics", [])
+            grok_sig     = result.get("grok_signal", "")
+
+            with st.expander(
+                f"**{company_name}**"
+                + (f" · [{domain}](https://{domain})" if domain else "")
+                + f" · {len(dms)} contacts",
+                expanded=False,
+            ):
+                if grok_sig:
+                    st.markdown("**Recent OTT Signal**")
+                    st.info(grok_sig)
+
+                if intent:
+                    st.markdown("**Intent Topics**")
+                    st.write("  ".join(f"`{t}`" for t in intent))
+
+                if dms:
+                    st.markdown("**Decision Makers**")
+                    for dm in dms:
+                        name    = dm.get("name", "")
+                        title   = dm.get("title", "")
+                        li      = dm.get("linkedin", "")
+                        email   = dm.get("email", "")
+                        loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
+
+                        dm_c1, dm_c2, dm_c3 = st.columns([3, 2, 2])
+                        with dm_c1:
+                            name_md = f"[{name}]({li})" if li else name
+                            st.markdown(f"**{name_md}**  \n{title}")
+                        with dm_c2:
+                            if email:
+                                st.caption(email)
+                            if loc:
+                                st.caption(loc)
+                        with dm_c3:
+                            if li:
+                                st.markdown(f"[LinkedIn →]({li})")
+                else:
+                    st.caption("No decision makers found via Apollo.")
+
+                if from_cache:
+                    st.caption(f"Cached: {result.get('cached_date', '')[:10]}")
+
+
+elif active_page == "accounts":
+    st.subheader(f"Account Intelligence · {bu}")
+    st.caption(
+        "Research companies you're already tracking — no search step needed. "
+        "Lead Scout goes straight to deep research on each account in your list. "
+        "Use the import section below to add accounts, then click Run."
+    )
+
+
+    # ---- Import section ----
+    with st.expander("Import Accounts from CSV", expanded=False):
+        st.caption(
+            "Upload a spreadsheet of companies to add to your tracked accounts list. "
+            "Required columns: **Company**, **Domain**. "
+            "Optional but helpful: LinkedIn URL, Tier, Region."
+        )
+        uploaded = st.file_uploader(
+            "Upload CSV",
+            type=["csv"],
+            key="account_upload",
+            help="Company and Domain columns are required.",
+        )
+
+        if uploaded:
+            try:
+                import io
+                df_import = pd.read_csv(io.StringIO(uploaded.read().decode("utf-8")))
+                df_import.columns = [c.strip() for c in df_import.columns]
+
+                required = {"Company", "Domain"}
+                missing_cols = required - set(df_import.columns)
+                if missing_cols:
+                    st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                else:
+                    # Show coverage gap warnings
+                    missing_li = df_import["LinkedIn URL"].isna().sum() if "LinkedIn URL" in df_import.columns else len(df_import)
+                    if missing_li > 0:
+                        st.warning(f"{missing_li} row(s) missing LinkedIn URL — these will have reduced Exa enrichment.")
+
+                    missing_domain = df_import["Domain"].isna().sum()
+                    if missing_domain > 0:
+                        st.error(f"{missing_domain} row(s) missing Domain — these will be skipped.")
+                        df_import = df_import.dropna(subset=["Domain"])
+
+                    st.markdown(f"**Preview — {len(df_import)} accounts · BU={bu}**")
+                    st.dataframe(df_import.head(10), hide_index=True)
+
+                    if st.button("Confirm Import", key="confirm_import", type="primary"):
+                        sc = _get_sc()
+                        imported = 0
+                        for _, row in df_import.iterrows():
+                            sc.upsert_account({
+                                "Company":      str(row.get("Company", "")),
+                                "Domain":       str(row.get("Domain", "")),
+                                "LinkedIn URL": str(row.get("LinkedIn URL", "")),
+                                "BU":           bu,
+                                "Tier":         str(row.get("Tier", "")),
+                                "Region":       str(row.get("Region", "")),
+                            })
+                            imported += 1
+                        st.success(f"{imported} account(s) imported to Accounts tab · BU={bu}")
+                        # Invalidate accounts cache
+                        st.session_state.pop("accounts_cache", None)
+                        st.rerun()
+
+            except Exception as exc:
+                st.error(f"Could not parse CSV: {exc}")
+
+    # ---- Accounts table ----
+    st.markdown(f"**Tracked Accounts · BU={bu}**")
+
+    # on button click the load accounts
+    acc_cache_key = f"accounts_{bu}"
+    acc_cache_ts  = f"accounts_cache_ts_{bu}"
+
+    col_refresh, _ = st.columns([1, 4])
+    with col_refresh:
+        if st.button("Load Accounts", key="load_accounts_btn", type="primary"):
+            try:
+                sc = _get_sc()
+                if sc:
+                    st.session_state[acc_cache_key] = sc.get_accounts(bu_filter=bu)
+            except Exception as exc:
+                st.error(f"Could not load accounts: {exc}")
+
+    accounts = st.session_state.get(acc_cache_key, [])
+
+    if accounts:
+        acc_df = pd.DataFrame(accounts)
+        # Highlight accounts never run or not run in 30+ days
+        def _last_run_color(val):
+            if not val:
+                return "background-color: #fde8e8"
+            try:
+                from datetime import datetime as dt
+                last = dt.strptime(val, "%Y-%m-%d %H:%M UTC")
+                days = (dt.utcnow() - last).days
+                if days > 30:
+                    return "background-color: #fff7d6"
+            except Exception:
+                pass
+            return ""
+        st.dataframe(
+            acc_df.style.applymap(_last_run_color, subset=["Last Run"]) if "Last Run" in acc_df.columns else acc_df,
+            width='stretch', hide_index=True,
+        )
+    else:
+        st.caption(f"No accounts found for BU={bu}. Import a CSV above to get started.")
+
+    # ---- Run account intelligence ----
+    st.divider()
+
+    _acc_run_mode = st.selectbox(
+        "Run Mode",
+        options=["Live — save results to Google Sheet", "Preview — research only, no save"],
+        index=1 if st.session_state.get("is_dry_run", False) else 0,
+        key="dry_run_select_accounts",
+        help="Live mode saves all results. Preview runs all AI research but skips the save step.",
+    )
+    is_dry_run = _acc_run_mode.startswith("Preview")
+    st.session_state["is_dry_run"] = is_dry_run
+
+    acc_run_btn = st.button(
+        f"Run Account Intelligence · BU={bu}",
+        type="primary",
+        use_container_width=True,
+        key="acc_run_btn",
+        disabled=not accounts,
+    )
+
+    if acc_run_btn:
+        _apply_model_overrides()
+        st.session_state["view_mode"] = "run"
+        log_stream = st.session_state.get("log_stream")
+        if log_stream:
+            log_stream.truncate(0)
+            log_stream.seek(0)
+
+        with st.status(
+            f"Running account intelligence for {len(accounts)} account(s) · BU={bu}…",
+            expanded=True,
+        ) as status:
+            st.write(f"Grok researching {len(accounts)} tracked account(s)…")
+            try:
+                sc = _get_sc()
+                results = main.run_account_pipeline(
+                    bu=bu,
+                    dry_run=is_dry_run,
+                    sheets_client=sc,
+                )
+                status.update(label="Account intelligence complete", state="complete", expanded=False)
+                _browser_notify(
+                    "Accedo Lead Scout — Account intelligence complete",
+                    f"BU={bu} · results are ready",
+                )
+            except Exception as exc:
+                status.update(label="Pipeline error", state="error", expanded=True)
+                st.error(f"**Error:** {exc}")
+                st.exception(exc)
+                results = []
+
+        if not results:
+            st.warning("No results returned. Check the Pipeline Log for details.")
+        else:
+            # Invalidate accounts cache so Last Run updates
+            st.session_state.pop(acc_cache_key, None)
+            _display_results(results, is_dry_run, f"[ACCOUNT] BU={bu}", bu)
+
 
 
 
