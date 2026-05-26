@@ -734,19 +734,23 @@ def render_history_card(row: dict) -> None:
                 ("Transition Gap", "**Transition Gap**"),
                 ("Opportunity Type", "**Opportunity Type**"),
             ]:
-                val = row.get(field, "")
+                val = str(row.get(field, "") or "")
                 if field == "Opportunity Type":
                     val = val if val in config.VALID_OPPORTUNITY_TYPES else ""
+                else:
+                    # Guard free-text fields: cap length and strip garbage class docs
+                    if "DeltaGenerator" in val or len(val) > 1500:
+                        val = ""
                 if val:
                     st.markdown(label)
                     st.write(val) if field != "Opportunity Type" else st.caption(val)
-            signal = row.get("Top Signal", "")
-            if signal:
+            signal = str(row.get("Top Signal", "") or "")
+            if signal and "DeltaGenerator" not in signal:
                 st.markdown("**Top Signal**")
                 conf = row.get("Signal Confidence", "")
                 icon = {"high": "High", "medium": "Med", "low": "Low"}.get(conf, "")
-                src = row.get("Signal Source", "")
-                src_md = f" · [source]({src})" if src and src.startswith("http") else (f" · {src}" if src else "")
+                src = str(row.get("Signal Source", "") or "")
+                src_md = f" · [source]({src})" if src.startswith("http") else ""
                 st.markdown(f"{icon} {signal[:250]}{src_md}")
         with ic2:
             vis_name  = row.get("Visionary Name", "")
