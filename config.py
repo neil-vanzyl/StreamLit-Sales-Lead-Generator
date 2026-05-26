@@ -27,14 +27,12 @@ Apollo key setup:
 
 try:
     import streamlit as st
-    # Mirror Streamlit secrets into os.environ so the rest of config.py works unchanged
+    import os
     for key, value in st.secrets.items():
-        import os
-        os.environ.setdefault(key, str(value))
+        os.environ[key] = str(value)
 except Exception:
-    pass  # Not running on Streamlit Cloud — .env handles it locally
+    pass
 
-import os
 from typing import List
 from dotenv import load_dotenv
 
