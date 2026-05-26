@@ -1240,13 +1240,16 @@ def render_settings_page() -> None:
 
     st.radio(
         "Discovery Engine",
-        options=["grok", "claude"],
-        index=0 if _saved_engine == "grok" else 1,
-        format_func=lambda x: "Grok — fast, broad sweep (~60s/vertical)" if x == "grok" else "Claude + Web Search — higher quality, more detailed (~90-120s/vertical)",
+        options=["grok", "claude", "openai"],
+        index=["grok", "claude", "openai"].index(_saved_engine) if _saved_engine in ["grok", "claude", "openai"] else 0,
+        format_func=lambda x: {
+            "grok":   "Grok — fast, broad sweep (~60s/vertical)",
+            "claude": "Claude + Web Search — high quality (requires Tier 2+)",
+            "openai": "GPT-4o + Web Search — recommended for quality",
+        }[x],
         key="_discovery_engine_widget",
         label_visibility="collapsed",
         on_change=_save_engine,
-        help="Claude uses the web_search tool and produces results similar to the CoWork experience. Requires web search to be enabled in the Claude Console.",
     )
 
     st.divider()
@@ -1283,6 +1286,7 @@ def render_settings_page() -> None:
     with st.expander("API Status", expanded=True):
         _api_status("XAI_API_KEY",           "Grok (web research)")
         _api_status("ANTHROPIC_API_KEY",     "Claude (scoring & outreach)")
+        _api_status("OPENAI_API_KEY",        "OpenAI GPT-4o (discovery)")
         _api_status("EXA_API_KEY",           "Exa (LinkedIn intel)")
         _api_status("APOLLO_MASTER_API_KEY", "Apollo (contact search)")
         _api_status("APOLLO_API_KEY",        "Apollo (contact enrichment)")
@@ -1889,7 +1893,6 @@ elif active_page == "find":
                         st.write(f"Running {total_verticals} vertical sweeps with Claude — pausing 60s between each to respect rate limits…")
                     else:
                         st.write(f"Running {total_verticals} vertical sweeps in sequence…")
-
                 v_placeholders = {}
                 for v in selected_verticals_for_sweep:
                     v_placeholders[v] = st.empty()
@@ -2896,8 +2899,6 @@ elif active_page == "accounts":
             # Invalidate accounts cache so Last Run updates
             st.session_state.pop(acc_cache_key, None)
             _display_results(results, is_dry_run, f"[ACCOUNT] BU={bu}", bu)
-
-
 
 
 # Footer

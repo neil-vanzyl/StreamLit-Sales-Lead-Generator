@@ -648,6 +648,15 @@ def _run_single_vertical_sweep(
                 signals=signals,
                 usage_tracker=usage,
             )
+        elif config.DISCOVERY_ENGINE == "openai":
+            from tools.openai_client import run_openai_discovery
+            result = run_openai_discovery(
+                brief=brief,
+                bu=bu,
+                vertical=vertical,
+                signals=signals,
+                usage_tracker=usage,
+            )
         else:
             from tools.grok import run_discovery_waterfall
             result = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
@@ -763,7 +772,7 @@ def run_discovery_sweep(
 
         # When using Claude discovery, pause between verticals to avoid
         # the 30k tokens/minute rate limit — web search results are large
-        if config.DISCOVERY_ENGINE == "claude" and idx < len(sweep_verticals):
+        if config.DISCOVERY_ENGINE in ("claude",) and idx < len(sweep_verticals):
             pause = 60
             logger.info(f"Claude engine: pausing {pause}s between verticals to respect rate limit…")
             time.sleep(pause)

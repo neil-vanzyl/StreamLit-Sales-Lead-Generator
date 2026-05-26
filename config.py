@@ -83,9 +83,13 @@ CLAUDE_ANALYST_MAX_TOKENS: int = 2048
 CLAUDE_COPYWRITER_MODEL: str = "claude-opus-4-5"
 CLAUDE_COPYWRITER_MAX_TOKENS: int = 2048
 
-# Discovery engine — "grok" or "claude"
-# Claude uses web_search tool and produces higher quality results
-# Grok is faster and cheaper for broad sweeps
+# ---------------------------------------------------------------------------
+# OpenAI — Discovery engine
+# ---------------------------------------------------------------------------
+OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_DISCOVERY_MODEL: str = "gpt-4o"
+
+# Discovery engine — "grok", "claude", or "openai"
 DISCOVERY_ENGINE: str = "grok"
 
 # ---------------------------------------------------------------------------
