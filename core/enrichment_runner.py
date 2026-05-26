@@ -227,6 +227,7 @@ def _light_competitor_pass(
     competitor_domain: str,
     original_company: str,
     existing_argument: str,
+    original_score: int = 0,
     usage_tracker=None,
 ) -> dict:
     """
@@ -294,15 +295,16 @@ def _light_competitor_pass(
         if m:
             cleaned = m.group(0)
         light_result = json.loads(cleaned)
+        comp_score = max(int(light_result.get("opportunity_score", 0) or 0), 30)
 
         return {
             "name":               competitor_name,
             "domain":             competitor_domain,
             "hq_country":         "",
             "argument":           light_result.get("argument", existing_argument),
-            "opportunity_score":  light_result.get("opportunity_score", 0),
+            "opportunity_score":  comp_score,
             "verdict":            light_result.get("verdict", "COLD"),
-            "better_opportunity": light_result.get("opportunity_score", 0) > 0,
+            "better_opportunity": comp_score > (original_score + 5),
         }
 
     except Exception as exc:
@@ -311,7 +313,7 @@ def _light_competitor_pass(
             "name": competitor_name,
             "domain": competitor_domain,
             "argument": existing_argument,
-            "opportunity_score": 0,
+            "opportunity_score": 30,
             "verdict": "COLD",
             "better_opportunity": False,
         }
@@ -564,11 +566,11 @@ def run_company_enrichment(
         result["entry_point"]       = analyst.get("top_entry_point", "")
         result["risk_if_no_action"] = analyst.get("key_risk_if_no_action", "")
         result["copywriter_brief"]  = analyst.get("copywriter_brief", "")
-        # Refine score from Sonnet
         refined = analyst.get("refined_score")
-        if refined is not None:
+        if refined is not None and int(refined) > 0:
             result["opportunity_score"] = int(refined)
             result["verdict"] = "HOT" if refined >= 70 else "WARM" if refined >= 50 else "COLD"
+        # If Sonnet returns 0 (e.g. Build-First penalty on Amazon subsidiary), keep Grok score
         logger.info(f"Enrichment: Sonnet done — score={result['opportunity_score']} verdict={result['verdict']}")
     except Exception as exc:
         logger.warning(f"Enrichment: Sonnet analyst failed for '{company}': {exc}")
@@ -644,6 +646,7 @@ def run_company_enrichment(
                 competitor_domain=comp.get("domain", ""),
                 original_company=company,
                 existing_argument=comp.get("argument", ""),
+                original_score=result["opportunity_score"],
                 usage_tracker=usage_tracker,
             )
             enriched_competitors.append(enriched)

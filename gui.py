@@ -2660,8 +2660,8 @@ elif active_page == "enrich":
                     st.markdown("**Top Signal**")
                     st.caption(top_sig)
 
-                # Competitor analysis
-                if competitors:
+                # Competitor analysis — only show if target company is worth pursuing
+                if competitors and result.get("opportunity_score", 0) >= 30:
                     st.markdown("---")
                     st.markdown(f"**Competitor Analysis** — {len(competitors)} companies assessed")
                     st.caption("Ranked by opportunity score. Green = better opportunity than the target company.")
