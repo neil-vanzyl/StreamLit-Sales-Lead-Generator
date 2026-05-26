@@ -16,6 +16,19 @@ from utils.helpers import with_retries
 
 logger = logging.getLogger("ott_lead_gen.grok")
 
+_VALID_OPPORTUNITY_TYPES = {
+    "Strategic Inflection",
+    "Talent Void",
+    "Active Friction",
+    "Tech Debt",
+    "Competitive Displacement",
+    "Expansion Signal",
+    "Ambition Gap",
+    "Funding Catalyst",
+    "Competitive Pressure",
+    "Growth Velocity",
+}
+
 @with_retries(max_attempts=3, delay=15.0, exceptions=(Exception,))
 def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usage_tracker=None) -> dict:
     """
@@ -203,6 +216,17 @@ def _parse_response(raw: str, query: str, sources: List[dict] = None) -> dict:
     # Normalise results
     if "prospects" not in data:
         data = {"prospects": [data] if isinstance(data, dict) else data}
+
+    # Sanitise opportunity_type — must be one of the known labels
+    for prospect in data.get("prospects", []):
+        ot = prospect.get("opportunity_type", "")
+        if not isinstance(ot, str) or ot not in _VALID_OPPORTUNITY_TYPES:
+            logger.warning(
+                "Invalid opportunity_type for '%s': %r — clearing field",
+                prospect.get("name", "unknown"),
+                ot[:80] if isinstance(ot, str) else ot,
+            )
+            prospect["opportunity_type"] = ""
 
     data.setdefault("run_metadata", {}).update({
         "query": query,

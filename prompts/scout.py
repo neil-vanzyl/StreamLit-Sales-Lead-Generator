@@ -293,6 +293,10 @@ HARD RULES:
 9. PARENT ORGANISATION: Capture parent org in parent_org field.
 10. PROSPECT TYPE: Classify every prospect as TYPE_A or TYPE_B.
     TYPE B prospects MUST be included for emerging company queries.
+11. OPPORTUNITY TYPE: The "opportunity_type" field MUST be exactly ONE of these literal strings:
+    Strategic Inflection | Talent Void | Active Friction | Tech Debt | Competitive Displacement |
+    Expansion Signal | Ambition Gap | Funding Catalyst | Competitive Pressure | Growth Velocity
+    Do NOT return a description, a sentence, or any other text in this field. Return only the label.
 
 {{
   "prospects": [
