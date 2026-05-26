@@ -76,6 +76,7 @@ def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usag
             break
 
     logger.info(f"Grok Discovery: response received — {len(raw)} chars")
+    logger.info(f"Grok Discovery: raw response: {raw[:600]}")
 
     if usage_tracker is not None:
         usage_data = data.get("usage", {})

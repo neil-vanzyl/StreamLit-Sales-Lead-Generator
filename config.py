@@ -90,7 +90,7 @@ OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_DISCOVERY_MODEL: str = "gpt-4o"
 
 # Discovery engine — "grok", "claude", or "openai"
-DISCOVERY_ENGINE: str = "grok"
+DISCOVERY_ENGINE: str = "openai"
 
 # ---------------------------------------------------------------------------
 # Model registry — used by GUI model selector
