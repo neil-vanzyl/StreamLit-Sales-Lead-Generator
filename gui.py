@@ -1231,13 +1231,21 @@ def render_settings_page() -> None:
     st.divider()
     st.markdown("#### Discovery Engine")
     st.caption("Choose which AI runs the Find Companies search. Claude uses web search and produces more detailed, higher quality results. Grok is faster.")
+
+    # Use a persistent key separate from the widget key so it survives navigation
+    _saved_engine = st.session_state.get("_discovery_engine_saved", "grok")
+
+    def _save_engine():
+        st.session_state["_discovery_engine_saved"] = st.session_state["_discovery_engine_widget"]
+
     st.radio(
         "Discovery Engine",
         options=["grok", "claude"],
-        index=0 if st.session_state.get("discovery_engine", "grok") == "grok" else 1,
+        index=0 if _saved_engine == "grok" else 1,
         format_func=lambda x: "Grok — fast, broad sweep (~60s/vertical)" if x == "grok" else "Claude + Web Search — higher quality, more detailed (~90-120s/vertical)",
-        key="discovery_engine",
+        key="_discovery_engine_widget",
         label_visibility="collapsed",
+        on_change=_save_engine,
         help="Claude uses the web_search tool and produces results similar to the CoWork experience. Requires web search to be enabled in the Claude Console.",
     )
 
@@ -1337,8 +1345,8 @@ def _apply_model_overrides() -> None:
         if options and idx < len(options):
             setattr(config, attr, options[idx]["model"])
 
-    # Discovery engine toggle
-    config.DISCOVERY_ENGINE = st.session_state.get("discovery_engine", "grok")
+    # Discovery engine toggle — reads from persistent key that survives navigation
+    config.DISCOVERY_ENGINE = st.session_state.get("_discovery_engine_saved", "grok")
 
 
 def _render_help() -> None:
