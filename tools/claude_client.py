@@ -347,6 +347,63 @@ def run_claude_discovery(
 
 
 # ---------------------------------------------------------------------------
+# Analyst — Claude Sonnet
+# ---------------------------------------------------------------------------
+
+@with_retries(max_attempts=3, delay=8.0, exceptions=(Exception,))
+def qualify_prospect(prospect: dict, usage_tracker=None) -> dict:
+    """
+    Run the qualification analysis on a single prospect.
+    Uses Claude Sonnet for cost-effective structured reasoning.
+    """
+    company = prospect.get("name", "unknown")
+    logger.info(f"Analyst: qualifying '{company}' (Grok score: {prospect.get('opportunity_score', '?')})")
+
+    client = _get_client()
+
+    response = client.messages.create(
+        model=config.CLAUDE_ANALYST_MODEL,
+        max_tokens=config.CLAUDE_ANALYST_MAX_TOKENS,
+        system=ANALYST_SYSTEM_PROMPT,
+        messages=[
+            {"role": "user", "content": build_analyst_prompt(prospect)}
+        ],
+    )
+
+    raw = response.content[0].text
+    tokens_in  = response.usage.input_tokens  if response.usage else 0
+    tokens_out = response.usage.output_tokens if response.usage else 0
+    logger.info(f"Analyst <<< Sonnet | {len(raw)} chars | tokens={tokens_in}in/{tokens_out}out")
+    if usage_tracker is not None:
+        usage_tracker.record_sonnet(input_tokens=int(tokens_in), output_tokens=int(tokens_out))
+
+    try:
+        result = _extract_json(raw)
+    except json.JSONDecodeError:
+        logger.error(f"Analyst PARSE FAILED for '{company}' — raw:\n{raw[:600]}")
+        return {
+            "refined_score": 0,
+            "grok_score": prospect.get("opportunity_score", 0),
+            "score_delta_reasoning": "Parse failure — manual review required",
+            "verdict": "COLD",
+            "top_entry_point": "",
+            "transition_gap_confirmed": "",
+            "key_risk_if_no_action": "",
+            "copywriter_brief": "",
+            "write_to_sheet": False,
+            "skip_reason": "Analyst JSON parse failure",
+        }
+
+    logger.info(
+        f"Analyst OK '{company}' | "
+        f"grok={result.get('grok_score')} refined={result.get('refined_score')} | "
+        f"verdict={result.get('verdict')} | write={result.get('write_to_sheet')} | "
+        f"entry={str(result.get('top_entry_point',''))[:60]}"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Copywriter — Claude Opus
 # ---------------------------------------------------------------------------
 
