@@ -24,16 +24,9 @@ _client: OpenAI | None = None
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
-        import os
-        try:
-            import streamlit as st
-            api_key = st.secrets.get("OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-        except Exception:
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-        
-        if not api_key:
+        if not config.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is not set.")
-        _client = OpenAI(api_key=api_key)
+        _client = OpenAI(api_key=config.OPENAI_API_KEY)
     return _client
 
 
@@ -58,48 +51,36 @@ def _extract_json(raw: str) -> Any:
     raise json.JSONDecodeError("JSON extraction failed", raw, 0)
 
 
-OPENAI_DISCOVERY_SYSTEM = """You are a senior sales intelligence researcher for Accedo, a specialist OTT front-end development firm.
+OPENAI_DISCOVERY_SYSTEM = """You are a B2B sales intelligence researcher for Accedo, a specialist OTT front-end development firm.
 
 Accedo builds native CTV applications (Samsung Tizen, LG webOS, Roku, Fire TV, Apple TV, Android TV) for media companies, sports leagues, broadcasters, and streaming services.
 
-Your job: find real, named companies that are strong sales prospects for Accedo RIGHT NOW.
-
-A strong Accedo prospect:
-- Is a media company, broadcaster, sports league, streaming service, or content platform
-- Has a specific, verifiable reason to need OTT front-end development work TODAY
-- Shows one or more buying signals: recently raised funding, hiring OTT/streaming engineers, launching a new streaming product, missing Samsung/LG CTV app, using a weak vendor (ViewLift, 24i, OTTera), going through M&A
+YOUR ONLY JOB IS DISCOVERY — find real company names with one-line evidence. Do not score, qualify, or analyse.
 
 RULES:
-- Only return companies with verified, sourced evidence
-- Do NOT return companies that build in-house (Netflix, Disney, Amazon, Google)
-- Search thoroughly — verify Samsung/LG gaps, funding, and hiring signals
+- Only return companies you can verify exist with a real, sourced signal
+- Search multiple times using different queries to find enough candidates
+- Check thestreamable.com to verify Samsung/LG app gaps
+- Check crunchbase.com and techcrunch.com for funding rounds
+- Check LinkedIn Jobs for OTT/streaming hiring signals
+- Do NOT return companies that build everything in-house (Netflix, Disney, Amazon, Google)
+- AIM FOR THE NUMBER REQUESTED — search until you find enough verified candidates
 """
 
-OPENAI_DISCOVERY_USER = """Search the web to find {n} OTT streaming companies in {geography} that are strong prospects for Accedo.
+OPENAI_DISCOVERY_USER = """Search the web to find {n} OTT streaming companies in {geography} matching this brief:
 
-SEARCH BRIEF:
 {brief}
 
-Search strategy:
-- crunchbase.com / techcrunch.com for recent Series B/C funding in streaming
-- LinkedIn Jobs for "OTT engineer" OR "CTV developer" at media companies  
-- thestreamable.com to verify Samsung/LG app gaps
-- sportsvideo.org for sports streaming launches and news
-
-Return ONLY a JSON object — no prose before or after:
+Return ONLY this JSON, no preamble, no markdown:
 {{
   "companies": [
     {{
       "name": "Company Name",
-      "domain": "company.com",
       "hq_country": "United States",
+      "domain": "company.com",
       "signal_type": "CTV launch|Funding round|Hiring|Platform gap|Vendor friction|M&A|App redesign",
-      "opportunity_score": 65,
-      "evidence": "Specific evidence with source URL and date",
-      "source_url": "https://source.com/article",
-      "transition_gap": "Why they need to act now",
-      "incumbent_vendor": "Known OTT vendor or empty string",
-      "vertical": "{vertical}"
+      "evidence": "Specific signal with source name and approximate date",
+      "source_url": "https://source.com or empty string"
     }}
   ],
   "search_summary": "2-3 sentences on what you searched and what patterns emerged"
@@ -129,7 +110,6 @@ def run_openai_discovery(
         n=n_companies,
         geography=bu_label,
         brief=brief,
-        vertical=vertical or "OTT/Streaming",
     )
 
     logger.info(f"OpenAI Discovery: starting | vertical={vertical} | BU={bu} | n={n_companies}")
