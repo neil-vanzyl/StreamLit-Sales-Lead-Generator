@@ -750,7 +750,10 @@ def render_history_card(row: dict) -> None:
                 val = str(row.get(field, "") or "")
                 if val:
                     st.markdown(label)
-                    st.markdown(val) if field != "Opportunity Type" else st.caption(val)
+                    if field != "Opportunity Type":
+                        st.markdown(val)
+                    else:
+                        st.caption(val)
             signal = str(row.get("Top Signal", "") or "")
             if signal:
                 st.markdown("**Top Signal**")
