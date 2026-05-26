@@ -698,13 +698,22 @@ def render_result_card(r: dict, card_idx: int) -> None:
 
 def render_history_card(row: dict) -> None:
     company  = row.get("Company", "Unknown")
-    score    = row.get("Opportunity Score", "").replace("/100", "")
+    score    = str(row.get("Opportunity Score", "")).replace("/100", "")
     verdict  = row.get("Priority", "")
     tab      = row.get("_tab", "")
     domain   = row.get("Domain", "")
     ts       = row.get("Timestamp", "")
     bu       = row.get("BU", "")
     is_cold  = tab == "Cold Leads"
+
+    vis_name  = row.get("Visionary Name", "")
+    vis_title = row.get("Visionary Title", "")
+    vis_li    = row.get("Visionary LinkedIn", "")
+    vis_hook  = row.get("Visionary Hook", "")
+    ops_name  = row.get("Operator Name", "")
+    ops_title = row.get("Operator Title", "")
+    ops_li    = row.get("Operator LinkedIn", "")
+    ops_hook  = row.get("Operator Hook", "")
 
     st.markdown(f"### {company}")
     st.caption(f"{domain} · {ts} · {tab} · BU: {bu or '—'}")
@@ -739,17 +748,11 @@ def render_history_card(row: dict) -> None:
                 ("Opportunity Type", "**Opportunity Type**"),
             ]:
                 val = str(row.get(field, "") or "")
-                if field == "Opportunity Type":
-                    val = val if val in config.VALID_OPPORTUNITY_TYPES else ""
-                else:
-                    # Guard free-text fields: cap length and strip garbage class docs
-                    if "DeltaGenerator" in val or len(val) > 1500:
-                        val = ""
                 if val:
                     st.markdown(label)
                     st.write(val) if field != "Opportunity Type" else st.caption(val)
             signal = str(row.get("Top Signal", "") or "")
-            if signal and "DeltaGenerator" not in signal:
+            if signal:
                 st.markdown("**Top Signal**")
                 conf = row.get("Signal Confidence", "")
                 icon = {"high": "High", "medium": "Med", "low": "Low"}.get(conf, "")
@@ -757,10 +760,6 @@ def render_history_card(row: dict) -> None:
                 src_md = f" · [source]({src})" if src.startswith("http") else ""
                 st.markdown(f"{icon} {signal[:250]}{src_md}")
         with ic2:
-            vis_name  = row.get("Visionary Name", "")
-            vis_title = row.get("Visionary Title", "")
-            vis_li    = row.get("Visionary LinkedIn", "")
-            vis_hook  = row.get("Visionary Hook", "")
             st.markdown("**Visionary**")
             if vis_name:
                 nm = f"[{vis_name}]({vis_li})" if vis_li else vis_name
@@ -770,10 +769,6 @@ def render_history_card(row: dict) -> None:
             else:
                 st.caption("Not identified")
 
-            ops_name  = row.get("Operator Name", "")
-            ops_title = row.get("Operator Title", "")
-            ops_li    = row.get("Operator LinkedIn", "")
-            ops_hook  = row.get("Operator Hook", "")
             st.markdown("**Operator**")
             if ops_name:
                 nm = f"[{ops_name}]({ops_li})" if ops_li else ops_name
@@ -880,7 +875,7 @@ def render_history_sidebar(bu_filter: str = None) -> None:
 
     for row in recent:
         company = row.get("Company", "Unknown")
-        score   = row.get("Opportunity Score", "").replace("/100", "")
+        score   = str(row.get("Opportunity Score", "")).replace("/100", "")
         tab     = row.get("_tab", "")
         ts      = row.get("Timestamp", "")[:10]
         is_cold = tab == "Cold Leads"

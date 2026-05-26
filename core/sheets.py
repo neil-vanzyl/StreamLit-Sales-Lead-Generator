@@ -445,7 +445,7 @@ class SheetsClient:
 
         for ws, tab in [(self._ws_hot, "Leads"), (self._ws_cold, "Cold Leads")]:
             try:
-                records = ws.get_all_records()
+                records = ws.get_all_records(expected_headers=config.SHEET_COLUMNS)
                 for r in records:
                     if bu_filter and r.get("BU", "") != bu_filter:
                         continue
