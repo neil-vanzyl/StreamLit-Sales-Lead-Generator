@@ -16,18 +16,7 @@ from utils.helpers import with_retries
 
 logger = logging.getLogger("ott_lead_gen.grok")
 
-_VALID_OPPORTUNITY_TYPES = {
-    "Strategic Inflection",
-    "Talent Void",
-    "Active Friction",
-    "Tech Debt",
-    "Competitive Displacement",
-    "Expansion Signal",
-    "Ambition Gap",
-    "Funding Catalyst",
-    "Competitive Pressure",
-    "Growth Velocity",
-}
+_VALID_OPPORTUNITY_TYPES = config.VALID_OPPORTUNITY_TYPES
 
 @with_retries(max_attempts=3, delay=15.0, exceptions=(Exception,))
 def run_discovery_waterfall(brief: str, bu: str = "", signals: list = None, usage_tracker=None) -> dict:

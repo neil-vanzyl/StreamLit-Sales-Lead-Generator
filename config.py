@@ -331,3 +331,16 @@ SIGNALS_COLUMNS: List[str] = [
     "Score at Time",
     "Track",
 ]
+
+VALID_OPPORTUNITY_TYPES: frozenset = frozenset({
+    "Strategic Inflection",
+    "Talent Void",
+    "Active Friction",
+    "Tech Debt",
+    "Competitive Displacement",
+    "Expansion Signal",
+    "Ambition Gap",
+    "Funding Catalyst",
+    "Competitive Pressure",
+    "Growth Velocity",
+})

@@ -736,9 +736,7 @@ def render_history_card(row: dict) -> None:
             ]:
                 val = row.get(field, "")
                 if field == "Opportunity Type":
-                    # Only accept known labels — guard against garbage persisted to Sheets
-                    from tools.grok import _VALID_OPPORTUNITY_TYPES
-                    val = val if val in _VALID_OPPORTUNITY_TYPES else ""
+                    val = val if val in config.VALID_OPPORTUNITY_TYPES else ""
                 if val:
                     st.markdown(label)
                     st.write(val) if field != "Opportunity Type" else st.caption(val)
