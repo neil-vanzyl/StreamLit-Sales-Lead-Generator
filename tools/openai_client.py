@@ -89,12 +89,13 @@ Return ONLY a JSON object — no prose before or after:
       "signal_type": "CTV launch|Funding round|Hiring|Platform gap|Vendor friction|M&A|App redesign",
       "opportunity_score": 65,
       "evidence": "Specific evidence with source URL and date",
+      "source_url": "https://source.com/article",
       "transition_gap": "Why they need to act now",
       "incumbent_vendor": "Known OTT vendor or empty string",
       "vertical": "{vertical}"
     }}
   ],
-  "search_summary": "Brief description of searches performed"
+  "search_summary": "2-3 sentences on what you searched and what patterns emerged"
 }}"""
 
 
@@ -132,7 +133,7 @@ def run_openai_discovery(
         model=config.OPENAI_DISCOVERY_MODEL,
         instructions=OPENAI_DISCOVERY_SYSTEM,
         input=user_prompt,
-        tools=[{"type": "web_search_preview"}],
+        tools=[{"type": "web_search_2025_08_26"}],
     )
 
     # Extract text from response output
