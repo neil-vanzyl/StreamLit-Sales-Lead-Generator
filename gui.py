@@ -316,37 +316,26 @@ st.markdown(
         display: none !important;
     }
 
-    /* ── Top navigation — SERGIO-style pill radio ── */
-    div[data-testid="stRadio"] > div[role="radiogroup"] {
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-        gap: 2px !important;
-        background: transparent !important;
-        border: none !important;
-        padding: 0 !important;
+    /* ── Top navigation — SERGIO-style pill links ── */
+    a.topnav-link {
+        color: #808080;
+        font-size: 15px;
+        font-weight: 500;
+        padding: 5px 12px;
+        border-radius: 8px;
+        text-decoration: none !important;
+        white-space: nowrap;
+        display: inline-block;
+        transition: background 0.15s ease, color 0.15s ease;
     }
-    /* Hide the radio circle / BaseWeb mark */
-    div[data-testid="stRadio"] [data-baseweb="radio"] > div:first-child,
-    div[data-testid="stRadio"] label > div:first-child {
-        display: none !important;
+    a.topnav-link:hover {
+        color: #fdfdfd !important;
+        background: #1e1e1e;
+        text-decoration: none !important;
     }
-    div[data-testid="stRadio"] label {
-        padding: 5px 12px !important;
-        border-radius: 8px !important;
-        cursor: pointer !important;
-        font-size: 15px !important;
-        font-weight: 500 !important;
-        color: #808080 !important;
-        white-space: nowrap !important;
-        transition: background 0.15s ease, color 0.15s ease !important;
-    }
-    div[data-testid="stRadio"] label[aria-checked="true"] {
-        background-color: rgba(0,100,255,0.15) !important;
+    a.topnav-link.active {
+        background: rgba(0,100,255,0.15);
         color: #0064FF !important;
-    }
-    div[data-testid="stRadio"] label:hover {
-        color: #FDFDFD !important;
-        background-color: #1e1e1e !important;
     }
     </style>
     """,
@@ -397,91 +386,6 @@ if not render_email_gate():
     st.stop()
 
 _request_notification_permission()
-
-# ---------------------------------------------------------------------------
-# Region preference — load once per session, prompt on first sign-in
-# ---------------------------------------------------------------------------
-
-def _ensure_bu_pref_loaded() -> bool:
-    """
-    Load the user's stored BU preference into session state.
-    Returns False only when Sheets is reachable AND confirms no record exists
-    (genuine first sign-in). Any failure falls back to True to avoid
-    repeatedly showing the setup screen.
-    """
-    if st.session_state.get("_bu_pref_loaded"):
-        return True
-    email = get_current_user()
-    if not email:
-        st.session_state["_bu_pref_loaded"] = True
-        return True
-    sc = _get_sc()
-    if sc is None:
-        # Sheets unavailable — skip setup, use default
-        st.session_state["_bu_pref_loaded"] = True
-        return True
-    try:
-        stored_bu = sc.get_user_bu(email)
-    except Exception:
-        # Sheets call failed — skip setup rather than pestering the user
-        st.session_state["_bu_pref_loaded"] = True
-        return True
-    if stored_bu and stored_bu in config.BU_OPTIONS:
-        st.session_state["selected_bu"] = stored_bu
-        st.session_state["_bu_pref_loaded"] = True
-        return True
-    if stored_bu is None:
-        # Sheets reachable, no row found — genuine first sign-in
-        return False
-    # Stored value unrecognised — skip setup
-    st.session_state["_bu_pref_loaded"] = True
-    return True
-
-
-def _render_region_setup() -> None:
-    """Full-screen region picker shown once on first sign-in."""
-    _BU_META = {
-        "NAM":  ("North America", "US, Canada & Mexico"),
-        "E&L":  ("Europe & Latin America", "EMEA and LATAM accounts"),
-        "APAC": ("Asia Pacific", "Australia, Japan, SE Asia & beyond"),
-    }
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        if _ACCEDO_LOGO_SRC:
-            st.markdown(
-                f'<div style="text-align:center;padding:32px 0 12px;">'
-                f'<img src="{_ACCEDO_LOGO_SRC}" style="height:32px;width:auto;" /></div>',
-                unsafe_allow_html=True,
-            )
-        st.markdown("## Welcome to Lead Scout")
-        st.markdown(
-            "Before you get started, select your default region. "
-            "This sets which leads and history are shown to you by default. "
-            "You can change it anytime in **Settings**."
-        )
-        st.divider()
-        cols = st.columns(len(config.BU_OPTIONS))
-        for i, bu in enumerate(config.BU_OPTIONS):
-            title, subtitle = _BU_META.get(bu, (bu, ""))
-            with cols[i]:
-                if st.button(bu, key=f"_setup_bu_{bu}", use_container_width=True, type="primary"):
-                    email = get_current_user()
-                    if email:
-                        sc = _get_sc()
-                        if sc:
-                            try:
-                                sc.set_user_bu(email, bu)
-                            except Exception:
-                                pass
-                    st.session_state["selected_bu"] = bu
-                    st.session_state["_bu_pref_loaded"] = True
-                    st.rerun()
-                st.caption(f"**{title}**  \n{subtitle}")
-
-
-if not _ensure_bu_pref_loaded():
-    _render_region_setup()
-    st.stop()
 
 # ---------------------------------------------------------------------------
 # Session state helpers
@@ -1181,19 +1085,30 @@ def render_topnav() -> str:
             st.markdown("### Lead Scout")
 
     with col_nav:
-        current = st.session_state.get("active_page", "find")
-        if current not in _NAV_KEYS:
-            current = "find"
-        selected = st.radio(
-            "nav",
-            options=_NAV_LABELS,
-            index=_NAV_KEYS.index(current),
-            horizontal=True,
-            label_visibility="collapsed",
-            key="topnav_radio",
+        qp = st.query_params.get("page", None)
+        last_qp = st.session_state.get("_last_nav_qp", None)
+
+        if qp and qp in _NAV_KEYS and qp != last_qp:
+            # User clicked a nav link — URL changed, sync to session state
+            st.session_state["active_page"] = qp
+
+        active_page = st.session_state.get("active_page", "find")
+        if active_page not in _NAV_KEYS:
+            active_page = "find"
+
+        # Keep URL in sync with session state (does not trigger rerun)
+        st.query_params["page"] = active_page
+        st.session_state["_last_nav_qp"] = active_page
+
+        pills = "".join(
+            f'<a href="?page={key}" class="topnav-link{" active" if key == active_page else ""}">'
+            f'{label}</a>'
+            for label, key in zip(_NAV_LABELS, _NAV_KEYS)
         )
-        active_page = _NAV_KEYS[_NAV_LABELS.index(selected)]
-        st.session_state["active_page"] = active_page
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:2px;padding-top:6px;">{pills}</div>',
+            unsafe_allow_html=True,
+        )
 
     with col_user:
         current_user = get_current_user()
@@ -1289,22 +1204,13 @@ def render_settings_page() -> None:
 
     with col_b:
         st.markdown("#### Region")
-        _prev_bu = st.session_state.get("selected_bu", config.BU_DEFAULT)
         selected_bu = st.selectbox(
             "Your Region",
             options=config.BU_OPTIONS,
-            index=config.BU_OPTIONS.index(_prev_bu),
+            index=config.BU_OPTIONS.index(st.session_state.get("selected_bu", config.BU_DEFAULT)),
             help="NAM = North America (US, Canada, Mexico) · E&L = Europe & Latin America · APAC = Asia Pacific",
         )
         st.session_state["selected_bu"] = selected_bu
-        if selected_bu != _prev_bu:
-            _email = get_current_user()
-            if _email:
-                try:
-                    _get_sc().set_user_bu(_email, selected_bu)
-                    st.toast("Region saved.")
-                except Exception:
-                    pass
         st.caption(f"Active region: **{selected_bu}**")
 
     st.divider()
@@ -1798,14 +1704,13 @@ elif active_page == "find":
         st.session_state["form_version"] = st.session_state.get("form_version", 0) + 1
         st.rerun()
 
-    _fv = st.session_state.get("form_version", 0)
-    with st.form(f"discovery_form_{_fv}"):
+    with st.form(f"discovery_form_{st.session_state.get('form_version', 0)}"):
         st.caption("**What type of company are you targeting?**")
         selected_verticals = []
         v_cols = st.columns(4)
         for i, v in enumerate(VERTICALS):
             default = v in st.session_state.get("form_verticals", [])
-            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}_{_fv}"):
+            if v_cols[i % 4].checkbox(v, value=default, key=f"v_{v}"):
                 selected_verticals.append(v)
 
         st.divider()
@@ -1817,7 +1722,7 @@ elif active_page == "find":
                 options=group_signals,
                 default=[s for s in st.session_state.get("form_signals", [])
                          if s in group_signals],
-                key=f"ms_{group}_{_fv}",
+                key=f"ms_{group}",
             )
             selected_signals.extend(picked)
 
@@ -1827,7 +1732,7 @@ elif active_page == "find":
             "",
             value=st.session_state.get("form_context", ""),
             placeholder="e.g. stranded on 24i, just acquired X, mobile-only right now…",
-            key=f"form_context_input_{_fv}",
+            key="form_context_input",
             label_visibility="collapsed",
         )
 
@@ -2441,17 +2346,18 @@ elif active_page == "enrich":
     from utils.auth import get_current_user
     from core.enrichment_runner import (
         parse_company_input, estimate_enrichment_cost,
-        run_bulk_enrichment, run_company_enrichment,
+        run_bulk_enrichment, MAX_TOTAL_CALLS,
     )
 
     st.subheader("Enrich Companies")
     st.caption(
         "Already know which companies you want to target? Enter their names here. "
-        "Lead Scout will look up key decision makers, contact details, and recent buying signals for each one. "
-        "Results are saved for 90 days — so if you look up a company you've researched recently, it's instant and free."
+        "Lead Scout runs the same deep research as the Find Companies pipeline — "
+        "power map, opportunity score, signals, and entry points. "
+        "Optionally, ask Lead Scout to find 3 competitors per company and assess which is the better opportunity."
     )
 
-    # ---- Input section ----
+    # ---- Input ----
     col_text, col_upload = st.columns([3, 1])
     with col_text:
         enrich_text = st.text_area(
@@ -2469,20 +2375,44 @@ elif active_page == "enrich":
             label_visibility="collapsed",
         )
 
-    # Parse input immediately for preview
-    csv_bytes = csv_file.read() if csv_file else None
+    csv_bytes    = csv_file.read() if csv_file else None
     company_list = parse_company_input(enrich_text, csv_bytes)
 
     if company_list:
-        st.caption(f"**{len(company_list)} companies detected:** {', '.join(company_list[:8])}"
-                   + (f" +{len(company_list)-8} more" if len(company_list) > 8 else ""))
+        st.caption(
+            f"**{len(company_list)} companies detected:** {', '.join(company_list[:8])}"
+            + (f" +{len(company_list)-8} more" if len(company_list) > 8 else "")
+        )
 
-    is_dry_run_enrich = st.checkbox(
-        "Preview — check what's already cached before running",
-        key="enrichment_dry_run",
-        help="Checks which companies are already saved (free) vs which would need a fresh lookup (costs credits). No API calls are made.",
-    )
+    # ---- Options ----
+    col_opts1, col_opts2 = st.columns(2)
+    with col_opts1:
+        include_competitors = st.checkbox(
+            "Include competitor analysis (3 competitors per company)",
+            key="enrich_include_competitors",
+            help=(
+                f"For each company, Grok identifies 3 direct competitors and runs a light scan "
+                f"to argue for or against each as a better opportunity. "
+                f"Max {MAX_TOTAL_CALLS // 4} companies when enabled."
+            ),
+        )
+    with col_opts2:
+        is_dry_run_enrich = st.checkbox(
+            "Preview — check cache only, no API calls",
+            key="enrichment_dry_run",
+        )
 
+    # ---- Cap warning ----
+    if company_list and include_competitors and len(company_list) > MAX_TOTAL_CALLS // 4:
+        st.warning(
+            f"With competitor analysis enabled, only the first {MAX_TOTAL_CALLS // 4} companies "
+            f"will be processed (cap: {MAX_TOTAL_CALLS} total API calls). "
+            f"Disable competitor analysis to process up to {MAX_TOTAL_CALLS} companies."
+        )
+    elif company_list and not include_competitors and len(company_list) > MAX_TOTAL_CALLS:
+        st.warning(f"Only the first {MAX_TOTAL_CALLS} companies will be processed.")
+
+    # ---- Estimate + Run ----
     col_est, col_run = st.columns([3, 2])
 
     with col_est:
@@ -2494,30 +2424,33 @@ elif active_page == "enrich":
         ):
             director = get_current_user()
             if not director:
-                st.warning("Select your name in the sidebar first.")
+                st.warning("Sign in to continue.")
             else:
-                # Quick cache check to estimate fresh vs cached
                 sc = _get_sc()
                 cached_count = 0
-                if sc:
+                if sc and not is_dry_run_enrich:
                     for name in company_list:
                         from core.enrichment_runner import _resolve_domain
                         domain = _resolve_domain(name)
                         if domain and sc.get_enrichment_cache(domain):
                             cached_count += 1
-
-                est = estimate_enrichment_cost(len(company_list), cached_count)
+                est = estimate_enrichment_cost(
+                    len(company_list), cached_count,
+                    include_competitors=include_competitors,
+                )
                 st.session_state["enrichment_estimate"] = est
 
         estimate = st.session_state.get("enrichment_estimate")
         if estimate:
-            fresh = estimate["fresh"]
-            cached = estimate["cached"]
-            total_cost = estimate["estimated_total"]
+            fresh    = estimate["effective_fresh"]
+            cached   = estimate["cached"]
+            total_c  = estimate["estimated_total"]
+            calls    = estimate["total_calls"]
+            inc_comp = estimate["include_competitors"]
             st.info(
-                f"**Estimate:** {fresh} fresh · {cached} cached  \n"
-                f"**~${total_cost:.2f}** total "
-                f"(${estimate['cost_per_fresh']:.2f}/company)"
+                f"**Estimate:** {fresh} fresh · {cached} cached · {calls} API calls  \n"
+                f"**~${total_c:.2f}** total · ${estimate['cost_per_fresh']:.2f}/company"
+                + (" · includes competitor analysis" if inc_comp else "")
             )
 
     with col_run:
@@ -2533,15 +2466,14 @@ elif active_page == "enrich":
     if run_enrich_btn:
         director = get_current_user()
         if not director:
-            st.warning("⚠️ Select your name in the sidebar first.")
+            st.warning("Sign in to continue.")
         else:
-            # Confirm if not dry run and cost > $1
             estimate = st.session_state.get("enrichment_estimate", {})
             if (not is_dry_run_enrich and
                     estimate.get("estimated_total", 0) > 1.0 and
                     not st.session_state.get("enrichment_confirmed")):
                 st.warning(
-                    f"This will cost approximately **${estimate['estimated_total']:.2f}**. "
+                    f"This will cost approximately **${estimate.get('estimated_total', 0):.2f}**. "
                     f"Click **Enrich** again to confirm."
                 )
                 st.session_state["enrichment_confirmed"] = True
@@ -2549,10 +2481,9 @@ elif active_page == "enrich":
                 st.session_state.pop("enrichment_confirmed", None)
                 st.session_state.pop("enrichment_results", None)
 
-                # Build placeholders for live progress
                 st.divider()
                 st.subheader(
-                    f"{"Checking cache" if is_dry_run_enrich else "Enriching"} "
+                    f"{'Checking cache for' if is_dry_run_enrich else 'Enriching'} "
                     f"{len(company_list)} {'company' if len(company_list) == 1 else 'companies'}…"
                 )
 
@@ -2563,38 +2494,42 @@ elif active_page == "enrich":
                 all_results = []
 
                 def _enrich_start(name, idx, total):
-                    placeholders[name].markdown(
-                        f"**{name}** · {'checking cache' if is_dry_run_enrich else 'enriching'}… "
-                        f"*({idx}/{total})*"
+                    msg = "checking cache" if is_dry_run_enrich else (
+                        "researching + competitor analysis…" if include_competitors
+                        else "researching…"
                     )
+                    placeholders[name].markdown(f"**{name}** · {msg} *({idx}/{total})*")
 
                 def _enrich_done(name, result, idx, total):
                     if result.get("error"):
-                        placeholders[name].markdown(f"**{name}** · {result['error']}")
+                        placeholders[name].markdown(f"**{name}** · ❌ {result['error']}")
                     elif result.get("dry_run"):
                         cached = result.get("from_cache", False)
                         placeholders[name].markdown(
-                            f"**{name}** · "
-                            f"{'cached — free' if cached else 'fresh — ~$0.18'}"
+                            f"**{name}** · {'📦 cached — free' if cached else '🆕 fresh — ~$0.55'}"
                         )
                     else:
-                        dm_count = len(result.get("decision_makers", []))
-                        cached   = result.get("from_cache", False)
+                        score   = result.get("opportunity_score", 0)
+                        verdict = result.get("verdict", "?")
+                        cached  = result.get("from_cache", False)
+                        n_comp  = len(result.get("competitors", []))
                         placeholders[name].markdown(
-                            f"**{name}** · {dm_count} contacts · "
-                            f"{'cached' if cached else 'fresh'}"
+                            f"**{name}** · **{score}** · {verdict}"
+                            + (f" · {n_comp} competitors analysed" if n_comp else "")
+                            + (" · 📦 cached" if cached else "")
                         )
                     all_results.append(result)
 
                 sc = _get_sc()
                 with st.spinner(
-                    f"{'Checking cache' if is_dry_run_enrich else 'Running enrichment'} "
+                    f"Running {'cache check' if is_dry_run_enrich else 'full pipeline'} "
                     f"for {len(company_list)} companies…"
                 ):
                     run_bulk_enrichment(
                         companies=company_list,
                         bu=bu,
                         director=director,
+                        include_competitors=include_competitors,
                         dry_run=is_dry_run_enrich,
                         sheets=sc,
                         on_company_start=_enrich_start,
@@ -2605,74 +2540,121 @@ elif active_page == "enrich":
                 if is_dry_run_enrich:
                     cached_n = sum(1 for r in all_results if r.get("from_cache"))
                     st.success(
-                        f"Dry run complete — {cached_n} cached, "
+                        f"Preview complete — {cached_n} cached, "
                         f"{len(all_results)-cached_n} would require fresh enrichment"
-                    )
-                    _browser_notify(
-                        "Accedo Lead Scout — Dry run complete",
-                        f"{cached_n} cached · {len(all_results)-cached_n} would need fresh enrichment",
                     )
                 else:
                     st.success(f"Enrichment complete — {len(all_results)} companies processed")
-                    _browser_notify(
-                        "Accedo Lead Scout — Enrichment complete",
-                        f"{len(all_results)} company/companies processed",
-                    )
 
-    # ---- Results display ----
+    # ---- Results ----
     enrich_results = st.session_state.get("enrichment_results", [])
     fresh_results  = [r for r in enrich_results if not r.get("dry_run") and not r.get("error")]
 
     if fresh_results:
         st.divider()
         for result in fresh_results:
-            company_name = result.get("company", "")
-            domain       = result.get("domain", "")
-            from_cache   = result.get("from_cache", False)
-            dms          = result.get("decision_makers", [])
-            intent       = result.get("intent_topics", [])
-            grok_sig     = result.get("grok_signal", "")
+            company_name  = result.get("company", "")
+            domain        = result.get("domain", "")
+            score         = result.get("opportunity_score", 0)
+            verdict       = result.get("verdict", "")
+            from_cache    = result.get("from_cache", False)
+            competitors   = result.get("competitors", [])
 
             with st.expander(
-                f"**{company_name}**"
-                + (f" · [{domain}](https://{domain})" if domain else "")
-                + f" · {len(dms)} contacts",
-                expanded=False,
+                f"{'📦 ' if from_cache else ''}{company_name}  ·  {score}/100  ·  {verdict}",
+                expanded=True,
             ):
-                if grok_sig:
-                    st.markdown("**Recent OTT Signal**")
-                    st.info(grok_sig)
+                # Header row
+                col_score, col_meta = st.columns([2, 5])
+                with col_score:
+                    st.markdown(_score_bar_html(score), unsafe_allow_html=True)
+                    st.markdown(_verdict_chip(verdict), unsafe_allow_html=True)
+                    if domain:
+                        st.caption(f"[{domain}](https://{domain})")
+                    if from_cache:
+                        st.caption(f"📦 Cached · {result.get('cached_date', '')[:10]}")
 
-                if intent:
-                    st.markdown("**Intent Topics**")
-                    st.write("  ".join(f"`{t}`" for t in intent))
+                with col_meta:
+                    causal = result.get("causal_inflection", "")
+                    gap    = result.get("transition_gap", "")
+                    vendor = result.get("incumbent_vendor", "")
+                    entry  = result.get("entry_point", "")
+                    risk   = result.get("risk_if_no_action", "")
 
-                if dms:
-                    st.markdown("**Decision Makers**")
-                    for dm in dms:
-                        name    = dm.get("name", "")
-                        title   = dm.get("title", "")
-                        li      = dm.get("linkedin", "")
-                        email   = dm.get("email", "")
-                        loc     = ", ".join(filter(None, [dm.get("city"), dm.get("country")]))
+                    if causal:
+                        st.markdown("**Causal Inflection**")
+                        st.write(causal)
+                    if gap:
+                        st.info(f"**Transition Gap:** {gap}")
+                    if vendor:
+                        st.caption(f"**Incumbent Vendor:** {vendor}")
 
-                        dm_c1, dm_c2, dm_c3 = st.columns([3, 2, 2])
-                        with dm_c1:
-                            name_md = f"[{name}]({li})" if li else name
-                            st.markdown(f"**{name_md}**  \n{title}")
-                        with dm_c2:
-                            if email:
-                                st.caption(email)
-                            if loc:
-                                st.caption(loc)
-                        with dm_c3:
-                            if li:
-                                st.markdown(f"[LinkedIn →]({li})")
-                else:
-                    st.caption("No decision makers found via Apollo.")
+                # Power map
+                vis_name = result.get("visionary_name", "")
+                ops_name = result.get("operator_name", "")
+                if vis_name or ops_name:
+                    st.markdown("---")
+                    pm_col1, pm_col2 = st.columns(2)
+                    with pm_col1:
+                        if vis_name:
+                            vis_li = result.get("visionary_linkedin", "")
+                            nm = f"[{vis_name}]({vis_li})" if vis_li else vis_name
+                            st.markdown(f"**Visionary:** {nm}  \n*{result.get('visionary_title', '')}*")
+                    with pm_col2:
+                        if ops_name:
+                            ops_li = result.get("operator_linkedin", "")
+                            nm = f"[{ops_name}]({ops_li})" if ops_li else ops_name
+                            st.markdown(f"**Operator:** {nm}  \n*{result.get('operator_title', '')}*")
 
-                if from_cache:
-                    st.caption(f"Cached: {result.get('cached_date', '')[:10]}")
+                # Entry point and risk
+                if entry or risk:
+                    st.markdown("---")
+                    ep_col, risk_col = st.columns(2)
+                    with ep_col:
+                        if entry:
+                            st.markdown("**Accedo Entry Point**")
+                            st.success(entry)
+                    with risk_col:
+                        if risk:
+                            st.markdown("**Risk if Accedo Waits**")
+                            st.warning(risk)
+
+                # Top signal
+                top_sig = result.get("top_signal", "")
+                if top_sig:
+                    st.markdown("---")
+                    st.markdown("**Top Signal**")
+                    st.caption(top_sig)
+
+                # Competitor analysis
+                if competitors:
+                    st.markdown("---")
+                    st.markdown(f"**Competitor Analysis** — {len(competitors)} companies assessed")
+                    st.caption("Ranked by opportunity score. Green = better opportunity than the target company.")
+
+                    comp_cols = st.columns(len(competitors))
+                    for ci, comp in enumerate(competitors):
+                        with comp_cols[ci]:
+                            comp_name    = comp.get("name", "")
+                            comp_score   = comp.get("opportunity_score", 0)
+                            comp_verdict = comp.get("verdict", "COLD")
+                            argument     = comp.get("argument", "")
+                            better       = comp.get("better_opportunity", False)
+
+                            border_color = "#22c55e" if better else "#606060"
+                            st.markdown(
+                                f'<div style="border:1px solid {border_color};border-radius:8px;'
+                                f'padding:12px;margin-bottom:8px;">'
+                                f'<div style="font-weight:600;font-size:0.95rem;">{comp_name}</div>'
+                                f'<div style="font-size:0.8rem;color:#a0a0a0;margin-top:2px;">'
+                                f'{comp_score}/100 · {comp_verdict}'
+                                + (' · <span style="color:#22c55e;font-weight:600;">Better opportunity</span>' if better else '')
+                                + f'</div>'
+                                f'<div style="font-size:0.85rem;margin-top:8px;color:#d0d0d0;">{argument}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
 
 
 elif active_page == "accounts":

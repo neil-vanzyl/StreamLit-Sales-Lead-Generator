@@ -31,6 +31,8 @@ LOG_COLUMNS = [
     "Credits", "Cost USD", "Error", "Duration ms",
 ]
 
+USER_PREFS_COLUMNS = ["Email", "BU", "Updated At"]
+
 USAGE_TRACKER_COLUMNS = [
     "Timestamp", "Run ID", "Sales Director", "Track",
     "Query / Company", "Companies Researched",
@@ -41,11 +43,14 @@ USAGE_TRACKER_COLUMNS = [
 
 ENRICHMENT_COLUMNS = [
     "Timestamp", "Run ID", "Sales Director", "Company", "Domain",
-    "HQ Country", "Decision Makers", "C-Suite Changes",
-    "Intent Topics", "Grok Signal Summary", "BU", "Status",
+    "HQ Country", "Opportunity Score", "Verdict",
+    "Causal Inflection", "Transition Gap", "Incumbent Vendor",
+    "Top Signal", "Entry Point", "Risk if No Action",
+    "Visionary Name", "Visionary Title", "Visionary LinkedIn",
+    "Operator Name", "Operator Title", "Operator LinkedIn",
+    "Decision Makers", "Intent Topics", "Grok Signal Summary",
+    "Competitors", "BU", "Status",
 ]
-
-USER_PREFS_COLUMNS = ["Email", "BU", "Updated At"]
 
 
 class SheetsClient:
@@ -108,8 +113,8 @@ class SheetsClient:
         self._ws_accounts   = self._get_or_create_ws(config.GOOGLE_ACCOUNTS_WORKSHEET_NAME, config.ACCOUNTS_COLUMNS)
         self._ws_signals    = self._get_or_create_ws(config.GOOGLE_SIGNALS_WORKSHEET_NAME, config.SIGNALS_COLUMNS)
         self._ws_usage      = self._get_or_create_ws(config.GOOGLE_USAGE_TRACKER_WORKSHEET_NAME, USAGE_TRACKER_COLUMNS)
-        self._ws_enrichment  = self._get_or_create_ws(config.GOOGLE_ENRICHMENT_WORKSHEET_NAME, ENRICHMENT_COLUMNS)
-        self._ws_user_prefs  = self._get_or_create_ws(config.GOOGLE_USER_PREFS_WORKSHEET_NAME, USER_PREFS_COLUMNS)
+        self._ws_enrichment = self._get_or_create_ws(config.GOOGLE_ENRICHMENT_WORKSHEET_NAME, ENRICHMENT_COLUMNS)
+        self._ws_user_prefs = self._get_or_create_ws(config.GOOGLE_USER_PREFS_WORKSHEET_NAME, USER_PREFS_COLUMNS)
 
         self._load_dedup_cache()
 
@@ -625,10 +630,24 @@ class SheetsClient:
         company: str,
         domain: str,
         hq_country: str,
-        decision_makers: list,
-        c_suite_changes: str,
-        intent_topics: list,
-        grok_signal_summary: str,
+        opportunity_score: int = 0,
+        verdict: str = "",
+        causal_inflection: str = "",
+        transition_gap: str = "",
+        incumbent_vendor: str = "",
+        top_signal: str = "",
+        entry_point: str = "",
+        risk_if_no_action: str = "",
+        visionary_name: str = "",
+        visionary_title: str = "",
+        visionary_linkedin: str = "",
+        operator_name: str = "",
+        operator_title: str = "",
+        operator_linkedin: str = "",
+        decision_makers: list = None,
+        intent_topics: list = None,
+        grok_signal_summary: str = "",
+        competitors: list = None,
         bu: str = "",
     ) -> None:
         """Write one row to the Company Enrichment tab."""
@@ -637,15 +656,24 @@ class SheetsClient:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         row = [
             ts, run_id, director, company, domain, hq_country,
-            _json.dumps(decision_makers, ensure_ascii=False)[:2000],
-            c_suite_changes[:500],
-            ", ".join(intent_topics)[:300],
+            opportunity_score, verdict,
+            causal_inflection[:500],
+            transition_gap[:300],
+            incumbent_vendor[:200],
+            top_signal[:300],
+            entry_point[:500],
+            risk_if_no_action[:500],
+            visionary_name, visionary_title, visionary_linkedin,
+            operator_name, operator_title, operator_linkedin,
+            _json.dumps(decision_makers or [], ensure_ascii=False)[:2000],
+            ", ".join(intent_topics or [])[:300],
             grok_signal_summary[:800],
+            _json.dumps(competitors or [], ensure_ascii=False)[:2000],
             bu, "Fresh",
         ]
         try:
             self._ws_enrichment.append_row(row, value_input_option="RAW")
-            logger.info(f"Sheets: Enrichment written — {company} | {director}")
+            logger.info(f"Sheets: Enrichment written — {company} | score={opportunity_score} | {director}")
         except Exception as exc:
             logger.error(f"Sheets: Enrichment write failed: {exc}")
 
@@ -687,7 +715,7 @@ class SheetsClient:
     # ------------------------------------------------------------------
 
     def get_user_bu(self, email: str) -> Optional[str]:
-        """Return the stored BU for this user, or None if not set."""
+        """Return the stored BU preference for this user, or None if not set."""
         self._connect()
         try:
             records = self._ws_user_prefs.get_all_records()
@@ -703,7 +731,7 @@ class SheetsClient:
     def set_user_bu(self, email: str, bu: str) -> None:
         """Upsert the BU preference for this user."""
         self._connect()
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        ts          = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         email_lower = email.strip().lower()
         try:
             records = self._ws_user_prefs.get_all_records()
