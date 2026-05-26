@@ -697,6 +697,8 @@ def render_result_card(r: dict, card_idx: int) -> None:
 # ---------------------------------------------------------------------------
 
 def render_history_card(row: dict) -> None:
+    with st.expander("🔍 Debug: raw row values", expanded=False):
+        st.json({k: repr(v) for k, v in row.items()})
     company  = row.get("Company", "Unknown")
     score    = str(row.get("Opportunity Score", "")).replace("/100", "")
     verdict  = row.get("Priority", "")
