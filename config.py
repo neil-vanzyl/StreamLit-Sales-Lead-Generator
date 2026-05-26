@@ -27,12 +27,14 @@ Apollo key setup:
 
 try:
     import streamlit as st
-    import os
+    # Mirror Streamlit secrets into os.environ so the rest of config.py works unchanged
     for key, value in st.secrets.items():
-        os.environ[key] = str(value)
+        import os
+        os.environ.setdefault(key, str(value))
 except Exception:
-    pass
+    pass  # Not running on Streamlit Cloud — .env handles it locally
 
+import os
 from typing import List
 from dotenv import load_dotenv
 
@@ -85,7 +87,7 @@ CLAUDE_COPYWRITER_MAX_TOKENS: int = 2048
 # OpenAI — Discovery engine
 # ---------------------------------------------------------------------------
 OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_DISCOVERY_MODEL: str = "gpt-4o"
+OPENAI_DISCOVERY_MODEL: str = "gpt-5.4-mini"
 
 # Discovery engine — "grok", "claude", or "openai"
 DISCOVERY_ENGINE: str = "openai"

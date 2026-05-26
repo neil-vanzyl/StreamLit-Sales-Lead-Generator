@@ -55,23 +55,32 @@ OPENAI_DISCOVERY_SYSTEM = """You are a B2B sales intelligence researcher for Acc
 
 Accedo builds native CTV applications (Samsung Tizen, LG webOS, Roku, Fire TV, Apple TV, Android TV) for media companies, sports leagues, broadcasters, and streaming services.
 
-YOUR ONLY JOB IS DISCOVERY — find real company names with one-line evidence. Do not score, qualify, or analyse.
+An Accedo prospect is a CONTENT OWNER that needs a CTV app built:
+- Sports leagues, regional sports networks, broadcasters
+- Faith, fitness, entertainment, news streaming services  
+- Pay TV operators or telcos with video products
+- Any company that owns video content and needs a Samsung/LG/Roku app to deliver it
 
-RULES:
-- Only return companies you can verify exist with a real, sourced signal
-- Search multiple times using different queries to find enough candidates
-- Check thestreamable.com to verify Samsung/LG app gaps
-- Check crunchbase.com and techcrunch.com for funding rounds
-- Check LinkedIn Jobs for OTT/streaming hiring signals
-- Do NOT return companies that build everything in-house (Netflix, Disney, Amazon, Google)
-- AIM FOR THE NUMBER REQUESTED — search until you find enough verified candidates
-"""
+NOT Accedo prospects — exclude these entirely:
+- CTV advertising or ad tech platforms (tvScientific, Vibe, MNTN)
+- Measurement, analytics, or attribution companies
+- CDN, infrastructure, or streaming technology vendors
+- Companies that clearly build all technology in-house (Netflix, Disney, Amazon, Apple)
 
-OPENAI_DISCOVERY_USER = """Search the web to find {n} OTT streaming companies in {geography} matching this brief:
+Search thoroughly. Verify each company is a real content owner with a genuine buying signal before including it. Quality over quantity — only include companies you can verify."""
+
+OPENAI_DISCOVERY_USER = """Search the web to find {n} companies matching this brief:
 
 {brief}
 
-Return ONLY this JSON, no preamble, no markdown:
+Geography: {geography}
+
+Search multiple times using different queries. For each candidate verify:
+1. They own content and need a CTV app built (not ad tech or infrastructure)
+2. They have a real, sourced buying signal matching the brief
+3. They are based in {geography}
+
+After searching, return your findings as a JSON object:
 {{
   "companies": [
     {{
