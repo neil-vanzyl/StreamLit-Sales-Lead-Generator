@@ -761,6 +761,13 @@ def run_discovery_sweep(
         if on_vertical_done:
             on_vertical_done(vertical, new_companies, idx, len(sweep_verticals))
 
+        # When using Claude discovery, pause between verticals to avoid
+        # the 30k tokens/minute rate limit — web search results are large
+        if config.DISCOVERY_ENGINE == "claude" and idx < len(sweep_verticals):
+            pause = 60
+            logger.info(f"Claude engine: pausing {pause}s between verticals to respect rate limit…")
+            time.sleep(pause)
+
     logger.info(f"Discovery complete: {len(all_companies)} unique companies across {len(sweep_verticals)} vertical(s)")
 
     return {

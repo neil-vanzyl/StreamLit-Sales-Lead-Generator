@@ -1885,7 +1885,10 @@ elif active_page == "find":
                 total_verticals = len(selected_verticals_for_sweep) or 1
 
                 if total_verticals > 1:
-                    st.write(f"Running {total_verticals} vertical sweeps in sequence…")
+                    if config.DISCOVERY_ENGINE == "claude":
+                        st.write(f"Running {total_verticals} vertical sweeps with Claude — pausing 60s between each to respect rate limits…")
+                    else:
+                        st.write(f"Running {total_verticals} vertical sweeps in sequence…")
 
                 v_placeholders = {}
                 for v in selected_verticals_for_sweep:
