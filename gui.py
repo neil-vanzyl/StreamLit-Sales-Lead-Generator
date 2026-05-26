@@ -397,6 +397,10 @@ from utils.auth import get_current_user, render_budget_bar, render_email_gate
 if not render_email_gate(logo_src=_ACCEDO_LOGO_SRC):
     st.stop()
 
+# Initialise discovery engine session state from config default on first load
+if "_discovery_engine_saved" not in st.session_state:
+    st.session_state["_discovery_engine_saved"] = config.DISCOVERY_ENGINE
+
 _request_notification_permission()
 
 # ---------------------------------------------------------------------------
@@ -1349,8 +1353,13 @@ def _apply_model_overrides() -> None:
         if options and idx < len(options):
             setattr(config, attr, options[idx]["model"])
 
-    # Discovery engine toggle — reads from persistent key that survives navigation
-    config.DISCOVERY_ENGINE = st.session_state.get("_discovery_engine_saved", "grok")
+    # Discovery engine — check all possible sources in priority order
+    engine = (
+        st.session_state.get("_discovery_engine_saved") or
+        st.session_state.get("_discovery_engine_widget") or
+        config.DISCOVERY_ENGINE
+    )
+    config.DISCOVERY_ENGINE = engine
 
 
 def _render_help() -> None:
@@ -1640,17 +1649,34 @@ elif active_page == "settings":
     render_settings_page()
 
 elif active_page == "find":
-    _run_mode = st.selectbox(
-        "Run Mode",
-        options=["Live — save results to Google Sheet", "Preview — research only, no save"],
-        index=1 if st.session_state.get("is_dry_run", False) else 0,
-        key="dry_run_select_find",
-        help="Live mode saves all results. Preview runs all AI research but skips the save step (still uses credits).",
-    )
-    is_dry_run = _run_mode.startswith("Preview")
-    st.session_state["is_dry_run"] = is_dry_run
-    if is_dry_run:
-        st.warning("Preview Mode — results will not be saved to your Google Sheet")
+    col_mode, col_engine = st.columns(2)
+    with col_mode:
+        _run_mode = st.selectbox(
+            "Run Mode",
+            options=["Live — save results to Google Sheet", "Preview — research only, no save"],
+            index=1 if st.session_state.get("is_dry_run", False) else 0,
+            key="dry_run_select_find",
+            help="Live mode saves all results. Preview runs all AI research but skips the save step (still uses credits).",
+        )
+        is_dry_run = _run_mode.startswith("Preview")
+        st.session_state["is_dry_run"] = is_dry_run
+        if is_dry_run:
+            st.warning("Preview Mode — results will not be saved to your Google Sheet")
+    with col_engine:
+        _engine = st.selectbox(
+            "Discovery Engine",
+            options=["grok", "openai", "claude"],
+            index=["grok", "openai", "claude"].index(
+                st.session_state.get("discovery_engine_find", config.DISCOVERY_ENGINE)
+            ),
+            format_func=lambda x: {
+                "grok":   "Grok — fast (~60s/vertical)",
+                "openai": "GPT-4o + Web Search — recommended",
+                "claude": "Claude + Web Search",
+            }[x],
+            key="discovery_engine_find",
+        )
+        config.DISCOVERY_ENGINE = _engine
 
 
     from prompts.gemini_scorer import RANDOM_CONFIGS
@@ -2899,6 +2925,8 @@ elif active_page == "accounts":
             # Invalidate accounts cache so Last Run updates
             st.session_state.pop(acc_cache_key, None)
             _display_results(results, is_dry_run, f"[ACCOUNT] BU={bu}", bu)
+
+
 
 
 # Footer
