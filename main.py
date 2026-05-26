@@ -605,33 +605,40 @@ def _run_single_vertical_sweep(
     from tools.gemini import enrich_brief
 
     # Build vertical-specific brief
+    # If the rep edited the brief, use that as the starting point
+    # Otherwise build from vertical + signals
     bu_label = {
         "NAM":  "North America (US, Canada, Mexico)",
         "E&L":  "Europe or Latin America",
         "APAC": "Asia Pacific (including Australia and New Zealand)",
     }.get(bu, bu)
 
-    auto_brief = (
-        f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical} companies "
-        f"headquartered in {bu_label} "
-        f"showing these OTT buying signals: {', '.join(signals)}."
-    )
+    if brief_template and brief_template.strip():
+        # Rep provided or edited a brief — use it directly, skip Gemini rebuild
+        brief = brief_template.strip()
+        logger.info(f"  Vertical sweep: {vertical} | using rep brief ({len(brief)} chars)")
+    else:
+        # No brief provided — build from vertical + signals + Gemini
+        auto_brief = (
+            f"Find Tier 1, Tier 2, and ambitious Tier 3 {vertical} companies "
+            f"headquartered in {bu_label} "
+            f"showing these OTT buying signals: {', '.join(signals)}."
+        )
 
-    # Enrich with Gemini for vertical-specific terminology
-    try:
-        if hasattr(__import__('config'), 'GEMINI_API_KEY') and \
-                __import__('config').GEMINI_API_KEY:
-            enriched = enrich_brief(
-                auto_brief=auto_brief,
-                verticals=[vertical],
-                signals=signals,
-                bu=bu,
-            )
-            brief = enriched.get("enriched_brief", auto_brief)
-        else:
+        try:
+            if hasattr(__import__('config'), 'GEMINI_API_KEY') and \
+                    __import__('config').GEMINI_API_KEY:
+                enriched = enrich_brief(
+                    auto_brief=auto_brief,
+                    verticals=[vertical],
+                    signals=signals,
+                    bu=bu,
+                )
+                brief = enriched.get("enriched_brief", auto_brief)
+            else:
+                brief = auto_brief
+        except Exception:
             brief = auto_brief
-    except Exception:
-        brief = auto_brief
 
     logger.info(f"  Vertical sweep: {vertical} | engine={config.DISCOVERY_ENGINE} | brief={brief[:80]}...")
 
