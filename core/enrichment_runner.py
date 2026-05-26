@@ -533,6 +533,7 @@ def run_company_enrichment(
         "top_signal":         top_sig,
         "entry_point":        "",
         "risk_if_no_action":  "",
+        "copywriter_brief":   "",
         "visionary_name":     vis.get("name", ""),
         "visionary_title":    vis.get("title", ""),
         "visionary_linkedin": vis.get("linkedin", ""),
@@ -543,16 +544,85 @@ def run_company_enrichment(
                                 "linkedin": vis.get("linkedin", "")},
                                {"name": ops.get("name", ""), "title": ops.get("title", ""),
                                 "linkedin": ops.get("linkedin", "")}] if vis.get("name") else [],
+        "apollo_contacts":    [],
         "intent_topics":      [],
         "grok_signal_summary": top_sig,
         "competitors":        [],
         "from_cache":         False,
         "cached_date":        "",
         "error":              None,
-        "prospect":           prospect,  # keep full prospect for result card display
+        "prospect":           prospect,
     }
 
-    # Step 4 — Optional competitor analysis
+    # Step 4 — Sonnet analyst qualification
+    logger.info(f"Enrichment: running Sonnet analyst for '{company}'")
+    try:
+        import json as _json
+        from tools.claude_client import qualify_prospect
+        clean_prospect = _json.loads(_json.dumps(prospect, default=lambda o: None))
+        analyst = qualify_prospect(clean_prospect, usage_tracker=usage_tracker)
+        result["entry_point"]       = analyst.get("top_entry_point", "")
+        result["risk_if_no_action"] = analyst.get("key_risk_if_no_action", "")
+        result["copywriter_brief"]  = analyst.get("copywriter_brief", "")
+        # Refine score from Sonnet
+        refined = analyst.get("refined_score")
+        if refined is not None:
+            result["opportunity_score"] = int(refined)
+            result["verdict"] = "HOT" if refined >= 70 else "WARM" if refined >= 50 else "COLD"
+        logger.info(f"Enrichment: Sonnet done — score={result['opportunity_score']} verdict={result['verdict']}")
+    except Exception as exc:
+        logger.warning(f"Enrichment: Sonnet analyst failed for '{company}': {exc}")
+
+    # Step 5 — Apollo people search for contact details
+    if config.APOLLO_MASTER_API_KEY:
+        logger.info(f"Enrichment: running Apollo people search for '{company}'")
+        try:
+            import requests as _requests
+
+            DECISION_MAKER_TITLES = [
+                "Chief Executive Officer", "CEO", "Chief Technology Officer", "CTO",
+                "Chief Product Officer", "CPO", "Chief Revenue Officer", "CRO",
+                "VP Engineering", "SVP Engineering", "VP Product", "VP Technology",
+                "VP Streaming", "VP OTT", "Head of OTT", "Head of Streaming",
+                "Head of Digital", "SVP Digital", "VP Digital", "Managing Director",
+                "President", "General Manager",
+            ]
+            effective_domain = result["domain"]
+            payload = {
+                "q_organization_domains_list": [effective_domain] if effective_domain else [],
+                "q_keywords": company if not effective_domain else "",
+                "person_titles": DECISION_MAKER_TITLES[:8],
+                "person_seniorities": ["c_suite", "vp", "partner", "owner", "founder", "head", "director"],
+                "per_page": 6,
+            }
+            resp = _requests.post(
+                "https://api.apollo.io/api/v1/mixed_people/api_search",
+                json=payload,
+                headers={"Content-Type": "application/json",
+                         "X-Api-Key": config.APOLLO_MASTER_API_KEY},
+                timeout=25,
+            )
+            if resp.status_code == 200:
+                people = resp.json().get("people", [])
+                apollo_contacts = []
+                for p in people:
+                    li = p.get("linkedin_url", "") or ""
+                    if li and not li.startswith("http"):
+                        li = f"https://www.linkedin.com/in/{li}"
+                    apollo_contacts.append({
+                        "name":      p.get("name", ""),
+                        "title":     p.get("title", ""),
+                        "linkedin":  li,
+                        "email":     p.get("email", ""),
+                        "seniority": p.get("seniority", ""),
+                    })
+                result["apollo_contacts"] = apollo_contacts
+                result["decision_makers"] = apollo_contacts or result["decision_makers"]
+                logger.info(f"Enrichment: Apollo found {len(apollo_contacts)} contacts for '{company}'")
+            else:
+                logger.warning(f"Enrichment: Apollo people search returned {resp.status_code} for '{company}'")
+        except Exception as exc:
+            logger.warning(f"Enrichment: Apollo people search failed for '{company}': {exc}")
     if include_competitors:
         logger.info(f"Enrichment: identifying competitors for '{company}'")
         t0          = time.monotonic()
@@ -580,7 +650,7 @@ def run_company_enrichment(
 
         result["competitors"] = enriched_competitors
 
-    # Step 5 — Write to Sheets
+    # Step 7 — Write to Sheets
     try:
         sheets.write_enrichment(
             run_id=run_id,
@@ -588,8 +658,8 @@ def run_company_enrichment(
             company=company,
             domain=result["domain"],
             hq_country=hq_country,
-            opportunity_score=score,
-            verdict=verdict_raw,
+            opportunity_score=result["opportunity_score"],
+            verdict=result["verdict"],
             causal_inflection=result["causal_inflection"],
             transition_gap=result["transition_gap"],
             incumbent_vendor=result["incumbent_vendor"],

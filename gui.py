@@ -2619,6 +2619,40 @@ elif active_page == "enrich":
                             st.markdown("**Risk if Accedo Waits**")
                             st.warning(risk)
 
+                # Copywriter brief
+                brief = result.get("copywriter_brief", "")
+                if brief:
+                    st.markdown("---")
+                    st.markdown("**Copywriter Brief**")
+                    st.caption(brief)
+
+                # Apollo contacts (preferred) or Grok power map contacts
+                apollo_contacts = result.get("apollo_contacts", [])
+                decision_makers = result.get("decision_makers", [])
+                contacts_to_show = apollo_contacts if apollo_contacts else decision_makers
+
+                if contacts_to_show:
+                    st.markdown("---")
+                    source_label = "Apollo" if apollo_contacts else "Grok Power Map"
+                    st.markdown(f"**Decision Makers** · *via {source_label}*")
+                    for dm in contacts_to_show:
+                        name  = dm.get("name", "")
+                        title = dm.get("title", "")
+                        li    = dm.get("linkedin", "")
+                        email = dm.get("email", "")
+                        if not name:
+                            continue
+                        dm_c1, dm_c2, dm_c3 = st.columns([3, 3, 2])
+                        with dm_c1:
+                            name_md = f"[{name}]({li})" if li else name
+                            st.markdown(f"**{name_md}**  \n{title}")
+                        with dm_c2:
+                            if email:
+                                st.caption(f"✉️ {email}")
+                        with dm_c3:
+                            if li:
+                                st.markdown(f"[LinkedIn →]({li})")
+
                 # Top signal
                 top_sig = result.get("top_signal", "")
                 if top_sig:
