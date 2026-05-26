@@ -24,9 +24,16 @@ _client: OpenAI | None = None
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
-        if not config.OPENAI_API_KEY:
+        import os
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("OPENAI_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+        except Exception:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+        
+        if not api_key:
             raise ValueError("OPENAI_API_KEY is not set.")
-        _client = OpenAI(api_key=config.OPENAI_API_KEY)
+        _client = OpenAI(api_key=api_key)
     return _client
 
 
