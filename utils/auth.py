@@ -40,7 +40,7 @@ def require_user() -> str:
     return user
 
 
-def render_email_gate() -> bool:
+def render_email_gate(logo_src: str = None) -> bool:
     """
     Enforce Google OAuth login restricted to @accedo.tv accounts.
     Returns True if authenticated, False if the gate is showing (app should stop).
@@ -51,9 +51,17 @@ def render_email_gate() -> bool:
     if not user or not user.is_logged_in:
         _, col, _ = st.columns([1, 2, 1])
         with col:
-            st.markdown("## 🎯 Accedo Lead Scout")
+            if logo_src:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;">'
+                    f'<img src="{logo_src}" style="height:48px;width:auto;" />'
+                    f'<span style="font-size:2.4rem;font-weight:600;">Lead Scout</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("<h2 style='text-align:center;'>Lead Scout</h2>", unsafe_allow_html=True)
             st.markdown("---")
-            st.markdown("Sign in with your Accedo Google account to continue.")
             if st.button("Sign in with Google", type="primary", use_container_width=True):
                 st.login("google")
         return False

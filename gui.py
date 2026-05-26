@@ -316,26 +316,38 @@ st.markdown(
         display: none !important;
     }
 
-    /* ── Top navigation — SERGIO-style pill links ── */
-    a.topnav-link {
-        color: #808080;
-        font-size: 15px;
-        font-weight: 500;
-        padding: 5px 12px;
-        border-radius: 8px;
-        text-decoration: none !important;
-        white-space: nowrap;
-        display: inline-block;
-        transition: background 0.15s ease, color 0.15s ease;
+    /* ── Top navigation — SERGIO-style pill radio ── */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        gap: 2px !important;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
     }
-    a.topnav-link:hover {
-        color: #fdfdfd !important;
-        background: #1e1e1e;
-        text-decoration: none !important;
+    /* Hide the radio circle / BaseWeb mark */
+    div[data-testid="stRadio"] [data-baseweb="radio"] > div:first-child,
+    div[data-testid="stRadio"] label > div:first-child {
+        display: none !important;
     }
-    a.topnav-link.active {
-        background: rgba(0,100,255,0.15);
-        color: #0064FF !important;
+    div[data-testid="stRadio"] label {
+        padding: 5px 12px !important;
+        border-radius: 8px !important;
+        cursor: pointer !important;
+        font-size: 15px !important;
+        font-weight: 500 !important;
+        color: #808080 !important;
+        white-space: nowrap !important;
+        transition: background 0.15s ease, color 0.15s ease !important;
+    }
+    div[data-testid="stRadio"] label:has(input:checked),
+    div[data-testid="stRadio"] label[aria-checked="true"] {
+        background-color: #0064FF !important;
+        color: #FDFDFD !important;
+    }
+    div[data-testid="stRadio"] label:hover {
+        color: #FDFDFD !important;
+        background-color: #1e1e1e !important;
     }
     </style>
     """,
@@ -382,7 +394,7 @@ def _browser_notify(title: str, body: str = "") -> None:
 # ---------------------------------------------------------------------------
 from utils.auth import get_current_user, render_budget_bar, render_email_gate
 
-if not render_email_gate():
+if not render_email_gate(logo_src=_ACCEDO_LOGO_SRC):
     st.stop()
 
 _request_notification_permission()
@@ -1085,30 +1097,19 @@ def render_topnav() -> str:
             st.markdown("### Lead Scout")
 
     with col_nav:
-        qp = st.query_params.get("page", None)
-        last_qp = st.session_state.get("_last_nav_qp", None)
-
-        if qp and qp in _NAV_KEYS and qp != last_qp:
-            # User clicked a nav link — URL changed, sync to session state
-            st.session_state["active_page"] = qp
-
-        active_page = st.session_state.get("active_page", "find")
-        if active_page not in _NAV_KEYS:
-            active_page = "find"
-
-        # Keep URL in sync with session state (does not trigger rerun)
-        st.query_params["page"] = active_page
-        st.session_state["_last_nav_qp"] = active_page
-
-        pills = "".join(
-            f'<a href="?page={key}" class="topnav-link{" active" if key == active_page else ""}">'
-            f'{label}</a>'
-            for label, key in zip(_NAV_LABELS, _NAV_KEYS)
+        current = st.session_state.get("active_page", "find")
+        if current not in _NAV_KEYS:
+            current = "find"
+        selected = st.radio(
+            "nav",
+            options=_NAV_LABELS,
+            index=_NAV_KEYS.index(current),
+            horizontal=True,
+            label_visibility="collapsed",
+            key="topnav_radio",
         )
-        st.markdown(
-            f'<div style="display:flex;align-items:center;gap:2px;padding-top:6px;">{pills}</div>',
-            unsafe_allow_html=True,
-        )
+        active_page = _NAV_KEYS[_NAV_LABELS.index(selected)]
+        st.session_state["active_page"] = active_page
 
     with col_user:
         current_user = get_current_user()
@@ -1320,6 +1321,17 @@ def _apply_model_overrides() -> None:
 
 
 def _render_help() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] li {
+            font-weight: 300 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.subheader("Help & Reference")
     st.caption("Everything you need to know to get the most out of Lead Scout.")
 
@@ -1421,15 +1433,9 @@ Click **Run Account Intelligence**. Lead Scout researches each account directly 
             st.markdown("""
 **Opportunity Score (0–100)**
 How likely a company is to be in the market for Accedo's services right now, based on publicly available signals. Higher = stronger buying intent.
-
-**HOT (70+)**
-Strong, time-sensitive buying signals. Prioritise for immediate outreach.
-
-**WARM (50–69)**
-Relevant signals but less urgent. Worth pursuing — keep on your radar.
-
-**COLD (below 50)**
-Weak or no signals right now. Archived to your Cold Leads tab but not deleted.
+- 🔥 **HOT (70+)** — Strong, time-sensitive buying signals. Prioritise for immediate outreach.
+- 🌡️ **WARM (50–69)** — Relevant signals but less urgent. Worth pursuing — keep on your radar.
+- ❄️ **COLD (below 50)** — Weak or no signals right now. Archived to your Cold Leads tab but not deleted.
 
 **Causal Inflection**
 The specific event creating buying urgency right now — e.g. *"Just migrated off Brightcove, contract ends Q1 2026"* or *"New CTO hired from Netflix in September."*
@@ -1441,19 +1447,6 @@ A window of time when the company is most likely making a platform decision — 
 The category of opportunity — e.g. new build, platform migration, redesign, DTC pivot.
             """)
 
-            st.markdown("#### People")
-            st.markdown("""
-**Visionary**
-The executive who sets strategic direction — typically a CEO, Chief Digital Officer, or SVP Strategy. Cares about growth, market position, and competitive differentiation.
-
-**Operator**
-The person who owns the day-to-day platform — typically a VP Engineering, Head of Product, or CTO. Cares about solving technical problems and delivery timelines.
-
-**Apollo Contact**
-A contact found in the Apollo database — usually a senior leader with confirmed email and LinkedIn profile.
-            """)
-
-        with col_b:
             st.markdown("#### Tools & AI")
             st.markdown("""
 **Grok**
@@ -1473,6 +1466,19 @@ A search tool that finds LinkedIn intelligence and executive profiles to supplem
 
 **Cached / Cache**
 A saved result from a previous enrichment run. If a company was enriched within the last 90 days, Lead Scout uses the saved result instantly at no cost, rather than re-running the lookup.
+            """)
+
+        with col_b:
+            st.markdown("#### People")
+            st.markdown("""
+**Visionary**
+The executive who sets strategic direction — typically a CEO, Chief Digital Officer, or SVP Strategy. Cares about growth, market position, and competitive differentiation.
+
+**Operator**
+The person who owns the day-to-day platform — typically a VP Engineering, Head of Product, or CTO. Cares about solving technical problems and delivery timelines.
+
+**Apollo Contact**
+A contact found in the Apollo database — usually a senior leader with confirmed email and LinkedIn profile.
             """)
 
             st.markdown("#### Settings & Modes")
@@ -2363,7 +2369,7 @@ elif active_page == "enrich":
         enrich_text = st.text_area(
             "Company names",
             placeholder="Nexstar Media Group, Gray Television, Sinclair Broadcast...\n\nor paste one per line",
-            height=100,
+            height=150,
             key="enrichment_text_input",
         )
     with col_upload:
