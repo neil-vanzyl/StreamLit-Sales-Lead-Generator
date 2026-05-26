@@ -1212,7 +1212,6 @@ def render_settings_page() -> None:
             help="NAM = North America (US, Canada, Mexico) · E&L = Europe & Latin America · APAC = Asia Pacific",
         )
         st.session_state["selected_bu"] = selected_bu
-        st.caption(f"Active region: **{selected_bu}**")
 
     st.divider()
     st.markdown("#### Notifications")
