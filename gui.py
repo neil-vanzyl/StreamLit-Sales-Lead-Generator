@@ -1229,6 +1229,19 @@ def render_settings_page() -> None:
     )
 
     st.divider()
+    st.markdown("#### Discovery Engine")
+    st.caption("Choose which AI runs the Find Companies search. Claude uses web search and produces more detailed, higher quality results. Grok is faster.")
+    st.radio(
+        "Discovery Engine",
+        options=["grok", "claude"],
+        index=0 if st.session_state.get("discovery_engine", "grok") == "grok" else 1,
+        format_func=lambda x: "Grok — fast, broad sweep (~60s/vertical)" if x == "grok" else "Claude + Web Search — higher quality, more detailed (~90-120s/vertical)",
+        key="discovery_engine",
+        label_visibility="collapsed",
+        help="Claude uses the web_search tool and produces results similar to the CoWork experience. Requires web search to be enabled in the Claude Console.",
+    )
+
+    st.divider()
     st.markdown("#### AI Model Configuration")
     st.caption("Choose which AI model powers each stage. The defaults are recommended for most runs.")
     with st.expander("Customize AI Models", expanded=False):
@@ -1323,6 +1336,9 @@ def _apply_model_overrides() -> None:
         options = config.MODEL_OPTIONS.get(role, [])
         if options and idx < len(options):
             setattr(config, attr, options[idx]["model"])
+
+    # Discovery engine toggle
+    config.DISCOVERY_ENGINE = st.session_state.get("discovery_engine", "grok")
 
 
 def _render_help() -> None:

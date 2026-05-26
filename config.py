@@ -83,6 +83,11 @@ CLAUDE_ANALYST_MAX_TOKENS: int = 2048
 CLAUDE_COPYWRITER_MODEL: str = "claude-opus-4-5"
 CLAUDE_COPYWRITER_MAX_TOKENS: int = 2048
 
+# Discovery engine — "grok" or "claude"
+# Claude uses web_search tool and produces higher quality results
+# Grok is faster and cheaper for broad sweeps
+DISCOVERY_ENGINE: str = "grok"
+
 # ---------------------------------------------------------------------------
 # Model registry — used by GUI model selector
 # Costs are per 1M tokens (input, output) in USD

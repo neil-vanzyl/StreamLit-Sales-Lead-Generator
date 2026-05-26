@@ -599,9 +599,9 @@ def _run_single_vertical_sweep(
 ) -> list:
     """
     Run one discovery sweep for a single vertical.
+    Uses config.DISCOVERY_ENGINE to choose between Grok and Claude + web search.
     Returns list of company dicts.
     """
-    from tools.grok import run_discovery_waterfall
     from tools.gemini import enrich_brief
 
     # Build vertical-specific brief
@@ -633,12 +633,25 @@ def _run_single_vertical_sweep(
     except Exception:
         brief = auto_brief
 
-    logger.info(f"  Vertical sweep: {vertical} | brief={brief[:80]}...")
+    logger.info(f"  Vertical sweep: {vertical} | engine={config.DISCOVERY_ENGINE} | brief={brief[:80]}...")
 
     try:
         usage.start_prospect(f"_sweep_{vertical}")
-        t0     = time.monotonic()
-        result = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
+        t0 = time.monotonic()
+
+        if config.DISCOVERY_ENGINE == "claude":
+            from tools.claude_client import run_claude_discovery
+            result = run_claude_discovery(
+                brief=brief,
+                bu=bu,
+                vertical=vertical,
+                signals=signals,
+                usage_tracker=usage,
+            )
+        else:
+            from tools.grok import run_discovery_waterfall
+            result = run_discovery_waterfall(brief, bu=bu, signals=signals, usage_tracker=usage)
+
         usage.end_prospect()
 
         companies   = result.get("companies", [])

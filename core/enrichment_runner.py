@@ -424,37 +424,31 @@ def run_company_enrichment(
 ) -> dict:
     """
     Full enrichment pipeline for one company.
-
     1. Check 90-day Sheets cache
     2. Resolve domain via Apollo
     3. Run full Grok research waterfall
-    4. Optional: identify 3 competitors + light pass each
-    5. Write to Company Enrichment tab
-    6. Return result dict for GUI
-
-    Returns:
-        {
-            "company", "domain", "hq_country",
-            "opportunity_score", "verdict",
-            "causal_inflection", "transition_gap", "incumbent_vendor",
-            "top_signal", "entry_point", "risk_if_no_action",
-            "visionary_name", "visionary_title", "visionary_linkedin",
-            "operator_name", "operator_title", "operator_linkedin",
-            "decision_makers", "intent_topics", "grok_signal_summary",
-            "competitors",
-            "from_cache", "cached_date", "error"
-        }
+    4. Sonnet analyst qualification
+    5. Apollo people search
+    6. Optional: identify 3 competitors + light pass each
+    7. Write to Company Enrichment tab + Usage Tracker
     """
     from core.sheets import SheetsClient
+    from utils.usage_tracker import RunUsage
 
     run_id  = run_id  or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     sheets  = sheets  or SheetsClient()
     company = company.strip()
 
+    # Create a RunUsage instance if one wasn't passed in from a bulk run
+    _own_usage = usage_tracker is None
+    usage      = usage_tracker or RunUsage(company)
+
     if not company:
         return {"error": "Company name is required.", "company": "", "domain": ""}
 
     logger.info(f"Enrichment: starting '{company}' | director={director} | competitors={include_competitors}")
+
+    usage.start_prospect(company)
 
     # Step 1 — resolve domain
     domain = _resolve_domain(company)
@@ -503,7 +497,7 @@ def run_company_enrichment(
 
     # Step 3 — Full Grok waterfall
     t0       = time.monotonic()
-    prospect = _run_full_waterfall(company, domain, usage_tracker=usage_tracker)
+    prospect = _run_full_waterfall(company, domain, usage_tracker=usage)
     logger.info(f"Enrichment: waterfall done in {time.monotonic()-t0:.1f}s")
 
     if prospect.get("error"):
@@ -562,7 +556,7 @@ def run_company_enrichment(
         import json as _json
         from tools.claude_client import qualify_prospect
         clean_prospect = _json.loads(_json.dumps(prospect, default=lambda o: None))
-        analyst = qualify_prospect(clean_prospect, usage_tracker=usage_tracker)
+        analyst = qualify_prospect(clean_prospect, usage_tracker=usage)
         result["entry_point"]       = analyst.get("top_entry_point", "")
         result["risk_if_no_action"] = analyst.get("key_risk_if_no_action", "")
         result["copywriter_brief"]  = analyst.get("copywriter_brief", "")
@@ -634,7 +628,7 @@ def run_company_enrichment(
             hq_country=hq_country,
             score=score,
             top_signal=top_sig,
-            usage_tracker=usage_tracker,
+            usage_tracker=usage,
         )
         logger.info(f"Enrichment: {len(competitors)} competitors identified in {time.monotonic()-t0:.1f}s")
 
@@ -647,7 +641,7 @@ def run_company_enrichment(
                 original_company=company,
                 existing_argument=comp.get("argument", ""),
                 original_score=result["opportunity_score"],
-                usage_tracker=usage_tracker,
+                usage_tracker=usage,
             )
             enriched_competitors.append(enriched)
 
@@ -684,6 +678,24 @@ def run_company_enrichment(
     except Exception as exc:
         logger.error(f"Enrichment: Sheets write failed: {exc}")
 
+    # Finalise usage tracking for this company
+    usage.end_prospect()
+    if _own_usage:
+        # Only write to Usage Tracker if we own this instance (not part of a bulk run)
+        try:
+            usage.finish()
+            sheets.write_usage(
+                run_id=run_id,
+                director=director,
+                track="Company Enrichment",
+                query=company,
+                companies_researched=1,
+                usage_summary=usage.summary(),
+                bu=bu,
+            )
+        except Exception as exc:
+            logger.warning(f"Enrichment: usage write failed: {exc}")
+
     return result
 
 
@@ -704,20 +716,23 @@ def run_bulk_enrichment(
 ) -> list:
     """
     Enrich a list of companies, respecting the MAX_TOTAL_CALLS cap.
+    Creates one shared RunUsage instance across all companies.
     """
     from core.sheets import SheetsClient
+    from utils.usage_tracker import RunUsage
 
     sheets  = sheets  or SheetsClient()
     run_id  = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    total   = len(companies)
     results = []
 
-    # Apply cap
+    # Cap
     if include_competitors:
-        max_direct = MAX_TOTAL_CALLS // 4
-        companies  = companies[:max_direct]
+        companies = companies[:MAX_TOTAL_CALLS // 4]
     else:
-        companies  = companies[:MAX_TOTAL_CALLS]
+        companies = companies[:MAX_TOTAL_CALLS]
+
+    # One RunUsage instance for the whole bulk run
+    bulk_usage = usage_tracker or (RunUsage(f"Bulk: {', '.join(companies[:3])}") if not dry_run else None)
 
     for idx, company in enumerate(companies, 1):
         if on_company_start:
@@ -741,12 +756,28 @@ def run_bulk_enrichment(
                 run_id=run_id,
                 include_competitors=include_competitors,
                 sheets=sheets,
-                usage_tracker=usage_tracker,
+                usage_tracker=bulk_usage,  # pass shared instance — suppresses per-company write_usage
             )
 
         results.append(result)
 
         if on_company_done:
             on_company_done(company, result, idx, len(companies))
+
+    # Write bulk usage once at the end
+    if bulk_usage and not dry_run:
+        try:
+            bulk_usage.finish()
+            sheets.write_usage(
+                run_id=run_id,
+                director=director,
+                track="Company Enrichment",
+                query=f"Bulk: {', '.join(companies[:3])}" + (f" +{len(companies)-3} more" if len(companies) > 3 else ""),
+                companies_researched=len(companies),
+                usage_summary=bulk_usage.summary(),
+                bu=bu,
+            )
+        except Exception as exc:
+            logger.warning(f"Bulk enrichment: usage write failed: {exc}")
 
     return results

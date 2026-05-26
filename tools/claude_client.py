@@ -98,8 +98,190 @@ def _extract_json(raw: str) -> Any:
 # Analyst — Claude Sonnet
 # ---------------------------------------------------------------------------
 
-@with_retries(max_attempts=3, delay=8.0, exceptions=(Exception,))
-def qualify_prospect(prospect: dict, usage_tracker=None) -> dict:
+
+
+# ---------------------------------------------------------------------------
+# Discovery — Claude Sonnet + Web Search
+# ---------------------------------------------------------------------------
+
+CLAUDE_DISCOVERY_SYSTEM = """You are a senior sales intelligence researcher for Accedo, a specialist OTT front-end development firm.
+
+Accedo builds native CTV applications (Samsung Tizen, LG webOS, Roku, Fire TV, Apple TV, Android TV) and streaming platforms for media companies, sports leagues, broadcasters, and streaming services.
+
+Your job is to find real, named companies that are strong sales prospects for Accedo right now.
+
+A strong Accedo prospect:
+- Is a media company, broadcaster, sports league, streaming service, or content platform
+- Has a specific, verifiable reason to need OTT front-end development work TODAY (not hypothetically)
+- Shows one or more of these buying signals: recently raised funding, hiring OTT/streaming engineers, launching a new streaming product, missing a major CTV platform (Samsung/LG gap), using a vendor with known weaknesses (ViewLift, 24i, OTTera), going through M&A, launching a new sports league or season
+
+CRITICAL RULES:
+- Only return companies you can verify exist and have a real signal — no hallucinations
+- Each company must have a specific, sourced piece of evidence for why they are a prospect NOW
+- Search thoroughly — use multiple searches to verify signals
+- Do NOT return companies that clearly build everything in-house (Netflix, Disney, Amazon)
+- Do NOT return companies already on major CTV platforms with no obvious gap
+"""
+
+CLAUDE_DISCOVERY_USER = """Search the web to find {n} OTT streaming companies in {geography} that are strong prospects for Accedo's front-end development services.
+
+SEARCH BRIEF:
+{brief}
+
+For each company you find, verify:
+1. They are a real company actively operating in streaming/OTT
+2. They have a specific, verifiable buying signal (funding, hiring, platform gap, vendor friction, new launch)
+3. They are headquartered in or operate primarily in {geography}
+
+Search strategy:
+- Search for companies matching the vertical and signals in the brief
+- Use thestreamable.com, crunchbase.com, sportsvideo.org, techcrunch.com, and LinkedIn Jobs to verify signals
+- Check if they are missing Samsung or LG apps (search "[company name] Samsung TV" or check thestreamable.com)
+- Check for recent funding rounds (crunchbase, techcrunch)
+- Check for OTT/streaming job postings (LinkedIn, Indeed)
+
+Return a JSON object in exactly this format:
+{{
+  "companies": [
+    {{
+      "name": "Company Name",
+      "domain": "company.com",
+      "hq_country": "United States",
+      "signal_type": "one of: CTV launch | Funding round | Hiring | Platform gap | Vendor friction | M&A | App redesign",
+      "opportunity_score": 65,
+      "evidence": "Specific verifiable evidence — include source URL and date",
+      "transition_gap": "Why they need to act now — deadline or window",
+      "incumbent_vendor": "Known OTT vendor or empty string",
+      "vertical": "{vertical}"
+    }}
+  ],
+  "search_summary": "Brief description of what you searched and found"
+}}
+
+Find exactly {n} companies. Only return companies you have verified evidence for."""
+
+
+@with_retries(max_attempts=2, delay=10.0, exceptions=(Exception,))
+def run_claude_discovery(
+    brief: str,
+    bu: str = "NAM",
+    vertical: str = "",
+    signals: list = None,
+    n_companies: int = 8,
+    usage_tracker=None,
+) -> dict:
+    """
+    Run discovery using Claude Sonnet + web search tool.
+    Returns the same company list structure as Grok's run_discovery_waterfall().
+
+    This is the alternative to Grok discovery — produces higher quality results
+    by leveraging Claude's reasoning with iterative web search.
+
+    Args:
+        brief:    Gemini-enriched brief describing target companies and signals
+        bu:       Business unit geography (NAM, E&L, APAC)
+        vertical: Single vertical name (e.g. "Sports", "Faith")
+        signals:  List of selected signal names
+        n_companies: Target number of companies to find (default 8)
+        usage_tracker: RunUsage instance for cost tracking
+    """
+    bu_label = {
+        "NAM":  "North America (US, Canada, Mexico)",
+        "E&L":  "Europe or Latin America",
+        "APAC": "Asia Pacific (including Australia and New Zealand)",
+    }.get(bu, bu)
+
+    user_prompt = CLAUDE_DISCOVERY_USER.format(
+        n=n_companies,
+        geography=bu_label,
+        brief=brief,
+        vertical=vertical or "OTT/Streaming",
+    )
+
+    logger.info(f"Claude Discovery: starting | vertical={vertical} | BU={bu} | n={n_companies}")
+
+    client = _get_client()
+
+    # Agentic loop — Claude may search multiple times before returning final JSON
+    messages = [{"role": "user", "content": user_prompt}]
+    final_text = ""
+    total_input  = 0
+    total_output = 0
+    max_iterations = 10
+
+    for iteration in range(max_iterations):
+        response = client.messages.create(
+            model=config.CLAUDE_ANALYST_MODEL,
+            max_tokens=4096,
+            system=CLAUDE_DISCOVERY_SYSTEM,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 15}],
+            messages=messages,
+        )
+
+        total_input  += response.usage.input_tokens  if response.usage else 0
+        total_output += response.usage.output_tokens if response.usage else 0
+
+        # Check stop reason
+        if response.stop_reason == "end_turn":
+            # Extract text from response
+            for block in response.content:
+                if hasattr(block, "text"):
+                    final_text = block.text
+                    break
+            break
+        elif response.stop_reason == "tool_use":
+            # Claude wants to search — add assistant turn and tool results
+            messages.append({"role": "assistant", "content": response.content})
+
+            # Build tool results for all tool_use blocks
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    logger.info(f"Claude Discovery: searching — {str(getattr(block, 'input', {}))[:80]}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": "",  # Anthropic handles web search results server-side
+                    })
+
+            if tool_results:
+                messages.append({"role": "user", "content": tool_results})
+        else:
+            # Unexpected stop reason — try to extract any text
+            for block in response.content:
+                if hasattr(block, "text"):
+                    final_text = block.text
+                    break
+            break
+
+    logger.info(
+        f"Claude Discovery: complete | {iteration+1} iterations | "
+        f"{total_input}in/{total_output}out tokens | {len(final_text)} chars"
+    )
+
+    if usage_tracker:
+        usage_tracker.record_sonnet(
+            input_tokens=int(total_input),
+            output_tokens=int(total_output),
+        )
+
+    if not final_text:
+        raise ValueError("Claude Discovery returned empty response")
+
+    # Parse JSON
+    try:
+        result = _extract_json(final_text)
+    except json.JSONDecodeError as exc:
+        logger.error(f"Claude Discovery JSON parse failed: {exc}\nRaw:\n{final_text[:500]}")
+        raise
+
+    companies = result.get("companies", [])
+    logger.info(f"Claude Discovery: {len(companies)} companies found")
+    for c in companies:
+        logger.info(f"  · {c.get('name')} [{c.get('signal_type')}] score={c.get('opportunity_score')} — {c.get('evidence','')[:80]}")
+
+    return result
+
     """
     Run the qualification analysis on a single Grok prospect.
 
