@@ -1092,195 +1092,123 @@ def _api_status(attr: str, label: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Slide-out Google Sheet panel — injected into the parent document so it can
-# overlay the full viewport regardless of which page is active.
+# Slide-out Google Sheet panel — pure CSS checkbox technique, no window.parent
+# required. Works in both local and deployed Streamlit environments.
 # ---------------------------------------------------------------------------
 
 def render_sheet_panel() -> None:
-    """Inject a slide-out Google Sheets drawer into the parent document once."""
+    """Render a fixed slide-out Google Sheets drawer using the CSS checkbox technique.
+
+    A hidden checkbox controls open/closed state entirely in CSS via :checked ~ sibling
+    selectors. No JavaScript or window.parent access needed, so it works in every
+    Streamlit environment. Tradeoff: any Streamlit rerun resets the checkbox (panel
+    closes); this is acceptable since the panel is for brief reference use.
+    """
     sheet_url = _get_sheet_url()
     embed_url = f"{sheet_url}/edit?rm=minimal&embedded=true" if sheet_url else ""
 
-    _components.html(
+    if embed_url:
+        body_html = (
+            f'<iframe src="{embed_url}" allow="fullscreen" '
+            f'style="flex:1;width:100%;border:none;background:#fff;"></iframe>'
+            f'<div style="flex-shrink:0;padding:8px 16px;border-top:1px solid #2a2a2a;'
+            f'text-align:center;">'
+            f'<a href="{sheet_url}" target="_blank" rel="noopener noreferrer" '
+            f'style="font-size:11px;color:#555;text-decoration:none;">'
+            f'Can\'t see the sheet? Open directly ↗</a></div>'
+        )
+    else:
+        body_html = (
+            '<div style="display:flex;flex-direction:column;align-items:center;'
+            'justify-content:center;flex:1;padding:40px;text-align:center;">'
+            '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;'
+            'line-height:1.7;margin:0;">Connecting to Google Sheets…<br>'
+            'Navigate to History to trigger the connection,<br>then re-open this panel.</p>'
+            '</div>'
+        )
+
+    st.markdown(
         f"""
-        <script>
-        (function() {{
-            var par = window.parent;
-            var doc = par.document;
-            var embedUrl = '{embed_url}';
+        <style>
+        #acc-chk {{
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+            width: 0; height: 0;
+        }}
+        label[for="acc-chk"]#acc-tab {{
+            position: fixed;
+            right: 0; top: 50%;
+            writing-mode: vertical-rl;
+            transform: translateY(-50%) rotate(180deg);
+            background: #0064FF; color: #FDFDFD;
+            border-radius: 8px 0 0 8px;
+            padding: 14px 8px;
+            font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+            font-family: Outfit, Arial, sans-serif;
+            cursor: pointer; z-index: 9997;
+            box-shadow: -2px 0 12px rgba(0,100,255,0.35);
+            transition: background 0.15s, opacity 0.2s;
+            user-select: none;
+        }}
+        label[for="acc-chk"]#acc-tab:hover {{ background: #0050CB; }}
+        #acc-chk:checked ~ label[for="acc-chk"]#acc-tab {{
+            opacity: 0; pointer-events: none;
+        }}
+        label[for="acc-chk"]#acc-overlay {{
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.55);
+            backdrop-filter: blur(3px);
+            z-index: 9998;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.25s ease;
+            cursor: pointer;
+        }}
+        #acc-chk:checked ~ label[for="acc-chk"]#acc-overlay {{
+            opacity: 1; pointer-events: all;
+        }}
+        #acc-panel {{
+            position: fixed; top: 0; right: -62%;
+            width: 62%; height: 100vh;
+            background: #111111;
+            border-left: 1px solid #2a2a2a;
+            box-shadow: -12px 0 40px rgba(0,0,0,0.6);
+            z-index: 9999;
+            display: flex; flex-direction: column;
+            transition: right 0.3s cubic-bezier(0.4,0,0.2,1);
+        }}
+        #acc-chk:checked ~ #acc-panel {{ right: 0; }}
+        #acc-hdr {{
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 16px; flex-shrink: 0;
+            border-bottom: 1px solid #2a2a2a;
+        }}
+        #acc-hdr-title {{
+            color: #FDFDFD; font-size: 13px; font-weight: 500;
+            font-family: Outfit, Arial, sans-serif;
+        }}
+        label[for="acc-chk"]#acc-close {{
+            background: none; color: #606060;
+            font-size: 18px; line-height: 1;
+            cursor: pointer; padding: 2px 6px;
+            transition: color 0.15s;
+            user-select: none;
+        }}
+        label[for="acc-chk"]#acc-close:hover {{ color: #FDFDFD; }}
+        </style>
 
-            // If panel already exists, just update iframe src if URL became available
-            var existingPanel = doc.getElementById('acc-sheet-panel');
-            if (existingPanel) {{
-                if (embedUrl) {{
-                    var existingFrame = doc.getElementById('acc-sheet-frame');
-                    var existingFallback = doc.getElementById('acc-sheet-fallback');
-                    if (existingFrame && existingFrame.getAttribute('data-src') !== embedUrl) {{
-                        existingFrame.setAttribute('data-src', embedUrl);
-                        existingFrame.src = embedUrl;
-                        if (existingFallback) existingFallback.style.display = 'none';
-                        existingFrame.style.display = '';
-                    }}
-                }}
-                return;
-            }}
-
-            // ── CSS ──────────────────────────────────────────────────────────
-            var style = doc.createElement('style');
-            style.textContent = [
-                '#acc-sheet-overlay {{',
-                '  position:fixed; inset:0;',
-                '  background:rgba(0,0,0,0.55);',
-                '  backdrop-filter:blur(3px);',
-                '  z-index:9998;',
-                '  opacity:0; pointer-events:none;',
-                '  transition:opacity 0.25s ease;',
-                '}}',
-                '#acc-sheet-overlay.vis {{ opacity:1; pointer-events:all; }}',
-
-                '#acc-sheet-panel {{',
-                '  position:fixed; top:0; right:-62%;',
-                '  width:62%; height:100vh;',
-                '  background:#111111;',
-                '  border-left:1px solid #2a2a2a;',
-                '  box-shadow:-12px 0 40px rgba(0,0,0,0.6);',
-                '  z-index:9999;',
-                '  display:flex; flex-direction:column;',
-                '  transition:right 0.3s cubic-bezier(0.4,0,0.2,1);',
-                '}}',
-                '#acc-sheet-panel.open {{ right:0; }}',
-
-                '#acc-sheet-tab {{',
-                '  position:fixed; right:0; top:50%;',
-                '  transform:translateY(-50%);',
-                '  background:#0064FF; color:#FDFDFD;',
-                '  border:none; border-radius:8px 0 0 8px;',
-                '  padding:14px 8px;',
-                '  writing-mode:vertical-rl; transform:translateY(-50%) rotate(180deg);',
-                '  font-size:11px; font-weight:600; letter-spacing:1.5px;',
-                '  font-family:Outfit,Arial,sans-serif;',
-                '  cursor:pointer; z-index:9997;',
-                '  box-shadow:-2px 0 12px rgba(0,100,255,0.35);',
-                '  transition:background 0.15s, opacity 0.2s;',
-                '}}',
-                '#acc-sheet-tab:hover {{ background:#0050CB; }}',
-                '#acc-sheet-tab.hidden {{ opacity:0; pointer-events:none; }}',
-
-                '#acc-sheet-hdr {{',
-                '  display:flex; align-items:center; justify-content:space-between;',
-                '  padding:10px 16px; flex-shrink:0;',
-                '  border-bottom:1px solid #2a2a2a;',
-                '}}',
-                '#acc-sheet-hdr span {{',
-                '  color:#FDFDFD; font-size:13px; font-weight:500;',
-                '  font-family:Outfit,Arial,sans-serif;',
-                '}}',
-                '#acc-sheet-close {{',
-                '  background:none; border:none; color:#606060;',
-                '  font-size:18px; line-height:1; cursor:pointer;',
-                '  padding:0 4px; transition:color 0.15s;',
-                '}}',
-                '#acc-sheet-close:hover {{ color:#FDFDFD; }}',
-                '#acc-sheet-frame {{',
-                '  flex:1; width:100%; border:none; background:#fff;',
-                '}}',
-                '#acc-sheet-fallback a:hover {{ background:#0050CB !important; }}',
-            ].join('\\n');
-            doc.head.appendChild(style);
-
-            // ── Overlay ───────────────────────────────────────────────────────
-            var overlay = doc.createElement('div');
-            overlay.id = 'acc-sheet-overlay';
-            overlay.addEventListener('click', function() {{ par.accCloseSheet(); }});
-            doc.body.appendChild(overlay);
-
-            // ── Panel ─────────────────────────────────────────────────────────
-            var panel = doc.createElement('div');
-            panel.id = 'acc-sheet-panel';
-
-            var hdr = doc.createElement('div');
-            hdr.id = 'acc-sheet-hdr';
-
-            var title = doc.createElement('span');
-            title.textContent = 'OTT Leads · Google Sheet';
-            hdr.appendChild(title);
-
-            var closeBtn = doc.createElement('button');
-            closeBtn.id = 'acc-sheet-close';
-            closeBtn.textContent = '✕';
-            closeBtn.addEventListener('click', function() {{ par.accCloseSheet(); }});
-            hdr.appendChild(closeBtn);
-
-            panel.appendChild(hdr);
-
-            var frame = doc.createElement('iframe');
-            frame.id = 'acc-sheet-frame';
-            frame.allow = 'fullscreen';
-            if (embedUrl) {{
-                frame.src = embedUrl;
-                frame.setAttribute('data-src', embedUrl);
-            }}
-            panel.appendChild(frame);
-
-            // ── Fallback (shown if URL absent or Google blocks embedding) ─────
-            var fallback = doc.createElement('div');
-            fallback.id = 'acc-sheet-fallback';
-            fallback.style.cssText = 'flex-direction:column;align-items:center;justify-content:center;flex:1;gap:20px;padding:40px;text-align:center;';
-
-            if (!embedUrl) {{
-                fallback.style.display = 'flex';
-                frame.style.display = 'none';
-                fallback.innerHTML = '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;line-height:1.7;margin:0;">Connecting to Google Sheets…<br>Navigate to History to trigger the connection,<br>then re-open this panel.</p>';
-            }} else {{
-                fallback.style.display = 'none';
-                fallback.innerHTML = '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;line-height:1.7;margin:0;">Google is blocking the sheet from<br>loading here due to its iframe policy.</p>'
-                    + '<a href="{sheet_url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#0064FF;color:#FDFDFD;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;font-family:Outfit,Arial,sans-serif;" onmouseover="this.style.background=\'#0050CB\'" onmouseout="this.style.background=\'#0064FF\'">Open OTT Leads in new tab ↗</a>';
-
-                // Detect X-Frame-Options block after load attempt
-                setTimeout(function() {{
-                    try {{
-                        var fd = frame.contentDocument || frame.contentWindow.document;
-                        frame.style.display = 'none';
-                        fallback.style.display = 'flex';
-                    }} catch(e) {{
-                        // SecurityError = sheet loaded successfully cross-origin
-                    }}
-                }}, 2500);
-            }}
-            panel.appendChild(fallback);
-
-            doc.body.appendChild(panel);
-
-            // ── Tab trigger ───────────────────────────────────────────────────
-            var tab = doc.createElement('button');
-            tab.id = 'acc-sheet-tab';
-            tab.textContent = 'SHEET';
-            tab.title = 'Open Google Sheet panel';
-            tab.addEventListener('click', function() {{ par.accToggleSheet(); }});
-            doc.body.appendChild(tab);
-
-            // ── Public API on parent window ───────────────────────────────────
-            par.accOpenSheet = function() {{
-                doc.getElementById('acc-sheet-panel').classList.add('open');
-                doc.getElementById('acc-sheet-overlay').classList.add('vis');
-                doc.getElementById('acc-sheet-tab').classList.add('hidden');
-            }};
-            par.accCloseSheet = function() {{
-                doc.getElementById('acc-sheet-panel').classList.remove('open');
-                doc.getElementById('acc-sheet-overlay').classList.remove('vis');
-                doc.getElementById('acc-sheet-tab').classList.remove('hidden');
-            }};
-            par.accToggleSheet = function() {{
-                if (doc.getElementById('acc-sheet-panel').classList.contains('open')) {{
-                    par.accCloseSheet();
-                }} else {{
-                    par.accOpenSheet();
-                }}
-            }};
-        }})();
-        </script>
+        <input type="checkbox" id="acc-chk">
+        <label for="acc-chk" id="acc-tab">SHEET</label>
+        <label for="acc-chk" id="acc-overlay"></label>
+        <div id="acc-panel">
+            <div id="acc-hdr">
+                <span id="acc-hdr-title">OTT Leads · Google Sheet</span>
+                <label for="acc-chk" id="acc-close">✕</label>
+            </div>
+            {body_html}
+        </div>
         """,
-        height=1,
+        unsafe_allow_html=True,
     )
 
 
