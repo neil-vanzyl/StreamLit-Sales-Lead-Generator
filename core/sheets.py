@@ -118,6 +118,17 @@ class SheetsClient:
 
         self._load_dedup_cache()
 
+        # Cache the sheet URL in Streamlit session state so the nav bar link works
+        # regardless of when _connect() is first called successfully.
+        try:
+            import streamlit as _st
+            if self._ss and not _st.session_state.get("_cached_sheet_url"):
+                _st.session_state["_cached_sheet_url"] = (
+                    f"https://docs.google.com/spreadsheets/d/{self._ss.id}"
+                )
+        except Exception:
+            pass
+
     def _get_or_create_ws(self, title: str, columns: list = None) -> gspread.Worksheet:
         """Find or create a worksheet and ensure headers exist."""
         cols = columns or config.SHEET_COLUMNS

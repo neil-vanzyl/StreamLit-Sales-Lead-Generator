@@ -47,7 +47,13 @@ except Exception:
 if "sheets_client" not in st.session_state:
     try:
         from core.sheets import SheetsClient as _SheetsClient
-        st.session_state["sheets_client"] = _SheetsClient()
+        _sc_init = _SheetsClient()
+        _sc_init._connect()
+        st.session_state["sheets_client"] = _sc_init
+        st.session_state["_cached_sheet_url"] = (
+            f"https://docs.google.com/spreadsheets/d/{_sc_init._ss.id}"
+            if _sc_init._ss else ""
+        )
     except Exception:
         st.session_state["sheets_client"] = None
 
@@ -64,10 +70,26 @@ def _get_sc():
 
 def _get_sheet_url() -> str:
     """Return the Google Sheets URL for the active spreadsheet, or empty string."""
+    if st.session_state.get("_cached_sheet_url"):
+        return st.session_state["_cached_sheet_url"]
     try:
-        sc = _get_sc()
-        if sc and hasattr(sc, "_ss") and sc._ss:
-            return f"https://docs.google.com/spreadsheets/d/{sc._ss.id}"
+        sc = st.session_state.get("sheets_client")
+        # Fast path: client is already connected (e.g. from a prior get_recent_leads call)
+        if sc and getattr(sc, "_ss", None):
+            url = f"https://docs.google.com/spreadsheets/d/{sc._ss.id}"
+            st.session_state["_cached_sheet_url"] = url
+            return url
+        # Slow path: try to connect now
+        if sc is None:
+            from core.sheets import SheetsClient as _SheetsClient
+            sc = _SheetsClient()
+            st.session_state["sheets_client"] = sc
+        if getattr(sc, "_ss", None) is None:
+            sc._connect()
+        if getattr(sc, "_ss", None):
+            url = f"https://docs.google.com/spreadsheets/d/{sc._ss.id}"
+            st.session_state["_cached_sheet_url"] = url
+            return url
     except Exception:
         pass
     return ""
@@ -251,6 +273,11 @@ st.markdown(
     hr {
         border-color: #2a2a2a !important;
     }
+    /* Tighten the gap below the top-nav divider only */
+    [data-testid="stMainBlockContainer"] > div:first-child hr:first-of-type {
+        margin-top: 4px !important;
+        margin-bottom: 0px !important;
+    }
 
     /* Secondary / caption text */
     [data-testid="stCaptionContainer"],
@@ -396,6 +423,17 @@ from utils.auth import get_current_user, render_budget_bar, render_email_gate
 
 if not render_email_gate(logo_src=_ACCEDO_LOGO_SRC):
     st.stop()
+
+# Eagerly connect to Google Sheets on every authenticated render so the Sheet
+# link in Settings is available immediately without needing to visit History first.
+# Once _connect() succeeds and caches _cached_sheet_url, this is a no-op.
+if not st.session_state.get("_cached_sheet_url"):
+    _eager_sc = _get_sc()
+    if _eager_sc and not getattr(_eager_sc, "_ss", None):
+        try:
+            _eager_sc._connect()
+        except Exception:
+            pass
 
 # Initialise discovery engine session state from config default on first load
 if "_discovery_engine_saved" not in st.session_state:
@@ -1086,20 +1124,26 @@ def render_topnav() -> str:
     _NAV_LABELS = ["Find Companies", "Enrich Companies", "Account Intelligence", "History", "Help", "Settings"]
     _NAV_KEYS   = ["find", "enrich", "accounts", "history", "help", "settings"]
 
-    col_logo, col_nav, col_gap, col_user = st.columns([2, 6, 0.4, 3])
+    # ── Row 1: logo + title ──────────────────────────────────────────────────
+    if _ACCEDO_LOGO_SRC:
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:12px;padding-bottom:28px;">'
+            f'<img src="{_ACCEDO_LOGO_SRC}" style="height:40px;width:auto;" />'
+            f'<span style="font-size:24pt;font-weight:600;color:#FDFDFD;'
+            f'letter-spacing:0.5px;white-space:nowrap;">Lead Scout</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:12px;padding-bottom:28px;">'
+            f'<span style="font-size:24pt;font-weight:600;color:#FDFDFD;">Lead Scout</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-    with col_logo:
-        if _ACCEDO_LOGO_SRC:
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:8px;padding-top:6px;">'
-                f'<img src="{_ACCEDO_LOGO_SRC}" style="height:28px;width:auto;" />'
-                f'<span style="font-size:18pt;font-weight:600;color:#FDFDFD;'
-                f'letter-spacing:0.5px;white-space:nowrap;">Lead Scout</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown("### Lead Scout")
+    # ── Row 2: nav pills + user info ─────────────────────────────────────────
+    col_nav, col_user = st.columns([8, 3])
 
     with col_nav:
         current = st.session_state.get("active_page", "find")
@@ -1123,7 +1167,6 @@ def render_topnav() -> str:
             picture_url  = getattr(_user_obj, "picture", None)
             display_name = getattr(_user_obj, "name", None) or current_user.split("@")[0]
 
-            # Build avatar HTML
             avatar_src = _get_avatar_data_url(picture_url) if picture_url else None
             if avatar_src:
                 pic_html = (
@@ -1140,7 +1183,6 @@ def render_topnav() -> str:
                     f'color:#0064FF;flex-shrink:0;">{initials}</div>'
                 )
 
-            # Budget bar values
             budget_html = ""
             try:
                 spent  = get_month_spend(current_user, _get_sc())
@@ -1161,7 +1203,6 @@ def render_topnav() -> str:
             except Exception:
                 pass
 
-            # Info stack (avatar + name + budget) beside the sign-out button
             col_info, col_logout = st.columns([5, 1])
             with col_info:
                 st.markdown(
@@ -1271,13 +1312,16 @@ def render_settings_page() -> None:
 
     st.divider()
     st.markdown("#### Google Sheet")
-    _sheet_url = _get_sheet_url()
-    if _sheet_url:
-        st.markdown(f"**[Open Google Sheet ↗]({_sheet_url})**")
+    _su = _get_sheet_url()
+    if _su:
+        st.markdown(
+            f'<a href="{_su}" target="_blank" rel="noopener noreferrer">'
+            f'Open OTT Leads sheet ↗</a>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"Leads · Cold Leads · Logs · Accounts · Signals")
     else:
-        st.markdown(f"**Sheet:** `{config.GOOGLE_SHEET_NAME}`")
-    st.caption(f"Hot leads tab: *{config.GOOGLE_WORKSHEET_NAME}*")
-    st.caption(f"Cold leads tab: *{config.GOOGLE_COLD_WORKSHEET_NAME}*")
+        st.caption("Sheet URL not available — connect to Google Sheets first.")
 
     st.divider()
     st.markdown("#### System Status")
