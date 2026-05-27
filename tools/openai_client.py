@@ -134,7 +134,7 @@ def run_openai_discovery(
         geography=bu_label,
     )
 
-    logger.info(f"OpenAI Deep Research: starting | vertical={vertical} | BU={bu}")
+    logger.info(f"OpenAI Discovery (gpt-5-mini): starting | vertical={vertical} | BU={bu}")
 
     client = _get_client()
     t0 = time.monotonic()
@@ -146,7 +146,7 @@ def run_openai_discovery(
 
     # Use streaming so the connection stays alive during the long research run
     with client.responses.stream(
-        model="o4-mini-deep-research-2025-06-26",
+        model="gpt-5-mini",
         input=[
             {
                 "role": "developer",
@@ -157,7 +157,6 @@ def run_openai_discovery(
                 "content": [{"type": "input_text", "text": user_prompt}],
             },
         ],
-        reasoning={"summary": "auto"},
         tools=[{"type": "web_search_preview"}],
         timeout=600,
     ) as stream:
