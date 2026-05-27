@@ -2085,10 +2085,11 @@ elif active_page == "find":
                     v_placeholders[v] = st.empty()
                     v_placeholders[v].markdown(f"**{v}** · queued")
 
-                def _on_v_start(vertical, idx, total):
+                def _on_v_start(vertical, idx, total, progress_msg=None):
                     if vertical in v_placeholders:
+                        msg = progress_msg or "searching…"
                         v_placeholders[vertical].markdown(
-                            f"**{vertical}** · searching… *({idx}/{total})*"
+                            f"**{vertical}** · {msg} *({idx}/{total})*"
                         )
 
                 def _on_v_done(vertical, companies, idx, total):

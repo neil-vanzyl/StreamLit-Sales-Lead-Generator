@@ -596,6 +596,7 @@ def _run_single_vertical_sweep(
     usage: "RunUsage",
     sheets: SheetsClient,
     director: str = "",
+    on_progress: callable = None,
 ) -> list:
     """
     Run one discovery sweep for a single vertical.
@@ -663,6 +664,7 @@ def _run_single_vertical_sweep(
                 vertical=vertical,
                 signals=signals,
                 usage_tracker=usage,
+                progress_callback=on_progress,
             )
         else:
             from tools.grok import run_discovery_waterfall
@@ -761,6 +763,7 @@ def run_discovery_sweep(
             usage=usage,
             sheets=sheets,
             director=director,
+            on_progress=lambda msg: on_vertical_start(vertical, idx, len(sweep_verticals), msg) if on_vertical_start else None,
         )
 
         # Deduplicate by normalised company name, keep first occurrence

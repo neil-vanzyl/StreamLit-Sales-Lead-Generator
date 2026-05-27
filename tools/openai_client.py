@@ -114,11 +114,14 @@ def run_openai_discovery(
     signals: list = None,
     n_companies: int = 8,
     usage_tracker=None,
+    progress_callback=None,
 ) -> dict:
     """
     Run discovery using OpenAI Deep Research (o4-mini-deep-research).
-    This is the same engine as ChatGPT's deep research mode — multi-step
-    agentic search with reasoning, not a single-shot web search call.
+    Uses streaming to keep the Streamlit WebSocket alive during the 3-5 min run.
+
+    Args:
+        progress_callback: optional callable(message: str) for live status updates
     """
     bu_label = {
         "NAM":  "North America (US, Canada, Mexico)",
@@ -133,10 +136,16 @@ def run_openai_discovery(
 
     logger.info(f"OpenAI Deep Research: starting | vertical={vertical} | BU={bu}")
 
-    client  = _get_client()
-    t0      = time.monotonic()
+    client = _get_client()
+    t0 = time.monotonic()
 
-    response = client.responses.create(
+    final_text   = ""
+    tokens_in    = 0
+    tokens_out   = 0
+    search_count = 0
+
+    # Use streaming so the connection stays alive during the long research run
+    with client.responses.stream(
         model="o4-mini-deep-research-2025-06-26",
         input=[
             {
@@ -150,23 +159,29 @@ def run_openai_discovery(
         ],
         reasoning={"summary": "auto"},
         tools=[{"type": "web_search_preview"}],
-    )
+        timeout=600,
+    ) as stream:
+        for event in stream:
+            event_type = getattr(event, "type", "")
+
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, "delta", "")
+                final_text += delta
+
+            elif event_type == "response.web_search_call.searching":
+                search_count += 1
+                query = getattr(event, "query", "")
+                logger.info(f"  Deep Research: search {search_count} — {query[:60]}")
+                if progress_callback:
+                    progress_callback(f"Searching... ({search_count} searches so far)")
+
+            elif event_type == "response.completed":
+                usage = getattr(event.response, "usage", None)
+                if usage:
+                    tokens_in  = getattr(usage, "input_tokens",  0)
+                    tokens_out = getattr(usage, "output_tokens", 0)
 
     elapsed = time.monotonic() - t0
-
-    # Extract final text from response output
-    final_text = ""
-    for item in response.output:
-        if hasattr(item, "type") and item.type == "message":
-            for part in item.content:
-                if hasattr(part, "type") and part.type == "output_text":
-                    final_text = part.text
-                    break
-        if final_text:
-            break
-
-    tokens_in  = getattr(response.usage, "input_tokens",  0) if response.usage else 0
-    tokens_out = getattr(response.usage, "output_tokens", 0) if response.usage else 0
 
     if usage_tracker:
         usage_tracker.record_sonnet(
@@ -176,7 +191,7 @@ def run_openai_discovery(
 
     logger.info(
         f"OpenAI Deep Research: complete | {elapsed:.0f}s | "
-        f"{tokens_in}in/{tokens_out}out | {len(final_text)} chars"
+        f"{search_count} searches | {tokens_in}in/{tokens_out}out | {len(final_text)} chars"
     )
 
     if not final_text:
