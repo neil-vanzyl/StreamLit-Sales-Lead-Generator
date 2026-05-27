@@ -144,7 +144,6 @@ def run_openai_discovery(
     tokens_out   = 0
     search_count = 0
 
-    # Use streaming so the connection stays alive during the long research run
     with client.responses.stream(
         model="gpt-5-mini",
         input=[
@@ -163,22 +162,54 @@ def run_openai_discovery(
         for event in stream:
             event_type = getattr(event, "type", "")
 
+            # Accumulate text deltas
             if event_type == "response.output_text.delta":
-                delta = getattr(event, "delta", "")
-                final_text += delta
+                final_text += getattr(event, "delta", "")
 
+            # Search progress
             elif event_type == "response.web_search_call.searching":
                 search_count += 1
                 query = getattr(event, "query", "")
-                logger.info(f"  Deep Research: search {search_count} — {query[:60]}")
+                logger.info(f"  Search {search_count}: {query[:60]}")
                 if progress_callback:
-                    progress_callback(f"Searching... ({search_count} searches so far)")
+                    progress_callback(f"Searching… ({search_count} searches so far)")
 
+            # On completion extract usage + text fallback
             elif event_type == "response.completed":
-                usage = getattr(event.response, "usage", None)
-                if usage:
-                    tokens_in  = getattr(usage, "input_tokens",  0)
-                    tokens_out = getattr(usage, "output_tokens", 0)
+                resp = getattr(event, "response", None)
+                if resp:
+                    usage = getattr(resp, "usage", None)
+                    if usage:
+                        tokens_in  = getattr(usage, "input_tokens",  0)
+                        tokens_out = getattr(usage, "output_tokens", 0)
+                    # Fallback — extract text directly from output if delta events missed
+                    if not final_text:
+                        try:
+                            for item in getattr(resp, "output", []):
+                                for part in getattr(item, "content", []):
+                                    text = getattr(part, "text", "")
+                                    if text:
+                                        final_text = text
+                                        break
+                                if final_text:
+                                    break
+                        except Exception as e:
+                            logger.warning(f"Could not extract text from completed response: {e}")
+
+        # Final fallback — get text from stream's final response
+        if not final_text:
+            try:
+                final_response = stream.get_final_response()
+                for item in getattr(final_response, "output", []):
+                    for part in getattr(item, "content", []):
+                        text = getattr(part, "text", "")
+                        if text:
+                            final_text = text
+                            break
+                    if final_text:
+                        break
+            except Exception as e:
+                logger.warning(f"Could not get final response from stream: {e}")
 
     elapsed = time.monotonic() - t0
 
