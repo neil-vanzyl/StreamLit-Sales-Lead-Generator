@@ -1198,7 +1198,7 @@ def render_sheet_panel() -> None:
         </style>
 
         <input type="checkbox" id="acc-chk">
-        <label for="acc-chk" id="acc-tab">SHEET</label>
+        <label for="acc-chk" id="acc-tab">OTT LEADS SHEET</label>
         <label for="acc-chk" id="acc-overlay"></label>
         <div id="acc-panel">
             <div id="acc-hdr">
