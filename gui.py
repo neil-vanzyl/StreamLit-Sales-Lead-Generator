@@ -1099,10 +1099,7 @@ def _api_status(attr: str, label: str) -> None:
 def render_sheet_panel() -> None:
     """Inject a slide-out Google Sheets drawer into the parent document once."""
     sheet_url = _get_sheet_url()
-    if not sheet_url:
-        return
-
-    embed_url = f"{sheet_url}/edit?rm=minimal&embedded=true"
+    embed_url = f"{sheet_url}/edit?rm=minimal&embedded=true" if sheet_url else ""
 
     _components.html(
         f"""
@@ -1110,9 +1107,23 @@ def render_sheet_panel() -> None:
         (function() {{
             var par = window.parent;
             var doc = par.document;
+            var embedUrl = '{embed_url}';
 
-            // Guard: only inject once per page load
-            if (doc.getElementById('acc-sheet-panel')) return;
+            // If panel already exists, just update iframe src if URL became available
+            var existingPanel = doc.getElementById('acc-sheet-panel');
+            if (existingPanel) {{
+                if (embedUrl) {{
+                    var existingFrame = doc.getElementById('acc-sheet-frame');
+                    var existingFallback = doc.getElementById('acc-sheet-fallback');
+                    if (existingFrame && existingFrame.getAttribute('data-src') !== embedUrl) {{
+                        existingFrame.setAttribute('data-src', embedUrl);
+                        existingFrame.src = embedUrl;
+                        if (existingFallback) existingFallback.style.display = 'none';
+                        existingFrame.style.display = '';
+                    }}
+                }}
+                return;
+            }}
 
             // ── CSS ──────────────────────────────────────────────────────────
             var style = doc.createElement('style');
@@ -1204,32 +1215,39 @@ def render_sheet_panel() -> None:
 
             var frame = doc.createElement('iframe');
             frame.id = 'acc-sheet-frame';
-            frame.src = '{embed_url}';
             frame.allow = 'fullscreen';
+            if (embedUrl) {{
+                frame.src = embedUrl;
+                frame.setAttribute('data-src', embedUrl);
+            }}
             panel.appendChild(frame);
 
-            // ── Fallback (shown if Google blocks iframe embedding) ────────────
+            // ── Fallback (shown if URL absent or Google blocks embedding) ─────
             var fallback = doc.createElement('div');
             fallback.id = 'acc-sheet-fallback';
-            fallback.style.cssText = 'display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:20px;padding:40px;text-align:center;';
-            fallback.innerHTML = '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;line-height:1.7;margin:0;">Google is blocking the sheet from<br>loading here due to its iframe policy.</p>'
-                + '<a href="{sheet_url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#0064FF;color:#FDFDFD;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;font-family:Outfit,Arial,sans-serif;transition:background 0.15s;" onmouseover="this.style.background=\'#0050CB\'" onmouseout="this.style.background=\'#0064FF\'">Open OTT Leads in new tab ↗</a>';
-            panel.appendChild(fallback);
+            fallback.style.cssText = 'flex-direction:column;align-items:center;justify-content:center;flex:1;gap:20px;padding:40px;text-align:center;';
 
-            // Detect blocked iframe: if X-Frame-Options blocks the load, the
-            // browser replaces iframe content with an empty same-origin document
-            // making contentDocument accessible (no SecurityError). If the sheet
-            // loads cross-origin successfully, access throws SecurityError.
-            setTimeout(function() {{
-                try {{
-                    var fd = frame.contentDocument || frame.contentWindow.document;
-                    // Accessible → cross-origin load was blocked; show fallback
-                    frame.style.display = 'none';
-                    fallback.style.display = 'flex';
-                }} catch(e) {{
-                    // SecurityError → sheet loaded cross-origin successfully
-                }}
-            }}, 2500);
+            if (!embedUrl) {{
+                fallback.style.display = 'flex';
+                frame.style.display = 'none';
+                fallback.innerHTML = '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;line-height:1.7;margin:0;">Connecting to Google Sheets…<br>Navigate to History to trigger the connection,<br>then re-open this panel.</p>';
+            }} else {{
+                fallback.style.display = 'none';
+                fallback.innerHTML = '<p style="color:#808080;font-size:13px;font-family:Outfit,Arial,sans-serif;line-height:1.7;margin:0;">Google is blocking the sheet from<br>loading here due to its iframe policy.</p>'
+                    + '<a href="{sheet_url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#0064FF;color:#FDFDFD;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;font-family:Outfit,Arial,sans-serif;" onmouseover="this.style.background=\'#0050CB\'" onmouseout="this.style.background=\'#0064FF\'">Open OTT Leads in new tab ↗</a>';
+
+                // Detect X-Frame-Options block after load attempt
+                setTimeout(function() {{
+                    try {{
+                        var fd = frame.contentDocument || frame.contentWindow.document;
+                        frame.style.display = 'none';
+                        fallback.style.display = 'flex';
+                    }} catch(e) {{
+                        // SecurityError = sheet loaded successfully cross-origin
+                    }}
+                }}, 2500);
+            }}
+            panel.appendChild(fallback);
 
             doc.body.appendChild(panel);
 
@@ -1262,7 +1280,7 @@ def render_sheet_panel() -> None:
         }})();
         </script>
         """,
-        height=0,
+        height=1,
     )
 
 
